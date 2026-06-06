@@ -93,6 +93,10 @@ fn local_ip() -> String {
 
 /// Create a UDP socket bound to the multicast port, joined to the group, with
 /// address/port reuse so several instances on one machine can all listen.
+///
+/// Joins the group on *every* IPv4 interface, so we still receive a peer's
+/// beacons on a multi-homed machine (Wi-Fi + Ethernet + VPN) where the default
+/// interface might not be the one the LAN traffic arrives on.
 fn bind_multicast() -> std::io::Result<UdpSocket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
@@ -100,7 +104,32 @@ fn bind_multicast() -> std::io::Result<UdpSocket> {
     socket.set_reuse_port(true)?;
     let addr: SocketAddr = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), DISCOVERY_PORT);
     socket.bind(&addr.into())?;
-    socket.join_multicast_v4(&MCAST_GROUP, &Ipv4Addr::UNSPECIFIED)?;
+
+    let mut joined = Vec::new();
+    match if_addrs::get_if_addrs() {
+        Ok(ifaces) => {
+            for iface in ifaces {
+                if iface.is_loopback() {
+                    continue;
+                }
+                if let std::net::IpAddr::V4(v4) = iface.ip() {
+                    if socket.join_multicast_v4(&MCAST_GROUP, &v4).is_ok() {
+                        joined.push(format!("{}={}", iface.name, v4));
+                    }
+                }
+            }
+        }
+        Err(e) => eprintln!("[disco] get_if_addrs failed: {e}"),
+    }
+    if joined.is_empty() {
+        socket.join_multicast_v4(&MCAST_GROUP, &Ipv4Addr::UNSPECIFIED)?;
+        eprintln!("[disco] joined {MCAST_GROUP} on default interface (INADDR_ANY)");
+    } else {
+        eprintln!(
+            "[disco] joined {MCAST_GROUP}:{DISCOVERY_PORT} on [{}]",
+            joined.join(", ")
+        );
+    }
     socket.set_multicast_loop_v4(true)?;
     Ok(socket.into())
 }
@@ -117,18 +146,24 @@ fn discovery_recv_loop(app: AppHandle, socket: UdpSocket, peers: PeerMap, my_id:
     loop {
         let (len, src) = match socket.recv_from(&mut buf) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!("[disco] recv error: {e}");
+                continue;
+            }
         };
         let beacon: Beacon = match serde_json::from_slice(&buf[..len]) {
             Ok(b) => b,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!("[disco] rx {len}B from {src}: not a beacon ({e})");
+                continue;
+            }
         };
         if beacon.node_id == my_id {
-            continue; // ignore our own beacons
+            continue; // ignore our own beacons (received via multicast loopback)
         }
         let peer = Peer {
             node_id: beacon.node_id.clone(),
-            name: beacon.name,
+            name: beacon.name.clone(),
             ip: src.ip().to_string(),
             tcp_port: beacon.tcp_port,
             udp_port: beacon.udp_port,
@@ -139,11 +174,15 @@ fn discovery_recv_loop(app: AppHandle, socket: UdpSocket, peers: PeerMap, my_id:
             map.insert(beacon.node_id.clone(), peer).is_none()
         };
         if is_new {
-            emit_peers(&app, &peers);
-        } else {
-            // Refresh last_seen without spamming the UI every beacon.
-            emit_peers(&app, &peers);
+            eprintln!(
+                "[disco] NEW peer '{}' @ {} (tcp {}, udp {})",
+                beacon.name,
+                src.ip(),
+                beacon.tcp_port,
+                beacon.udp_port
+            );
         }
+        emit_peers(&app, &peers);
     }
 }
 
@@ -157,8 +196,17 @@ fn beacon_send_loop(socket: UdpSocket, identity: Identity) {
     };
     let payload = serde_json::to_vec(&beacon).unwrap();
     let dst = SocketAddr::new(MCAST_GROUP.into(), DISCOVERY_PORT);
+    eprintln!(
+        "[disco] beaconing as '{}' -> {}:{} every {}s",
+        identity.name,
+        MCAST_GROUP,
+        DISCOVERY_PORT,
+        BEACON_INTERVAL.as_secs()
+    );
     loop {
-        let _ = socket.send_to(&payload, dst);
+        if let Err(e) = socket.send_to(&payload, dst) {
+            eprintln!("[disco] beacon send error: {e}");
+        }
         std::thread::sleep(BEACON_INTERVAL);
     }
 }
@@ -195,6 +243,7 @@ fn tcp_recv_loop(app: AppHandle, listener: TcpListener) {
                 return;
             }
             if let Ok(msg) = serde_json::from_slice::<WireMessage>(&buf) {
+                eprintln!("[msg] TCP from {} ({}): {}", msg.from, ip, msg.text);
                 let _ = app.emit(
                     "message-received",
                     IncomingMessage {
@@ -219,6 +268,7 @@ fn udp_recv_loop(app: AppHandle, socket: UdpSocket) {
             Err(_) => continue,
         };
         if let Ok(msg) = serde_json::from_slice::<WireMessage>(&buf[..len]) {
+            eprintln!("[msg] UDP from {} ({}): {}", msg.from, src.ip(), msg.text);
             let _ = app.emit(
                 "message-received",
                 IncomingMessage {
@@ -331,6 +381,10 @@ fn start_networking(app: &AppHandle) -> std::io::Result<AppState> {
         tcp_port,
         udp_port,
     };
+    eprintln!(
+        "[net] identity name='{}' ip={} tcp={} udp={} id={}",
+        identity.name, identity.ip, identity.tcp_port, identity.udp_port, identity.node_id
+    );
 
     let peers: PeerMap = Arc::new(Mutex::new(HashMap::new()));
 
