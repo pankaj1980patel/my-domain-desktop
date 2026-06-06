@@ -19,6 +19,7 @@ const MCAST_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 98);
 const DISCOVERY_PORT: u16 = 45678;
 const BEACON_INTERVAL: Duration = Duration::from_secs(2);
 const PEER_TIMEOUT_SECS: u64 = 8; // drop peers we haven't heard from in this long
+const SWEEP_EVERY_TICKS: u64 = 5; // run the unicast fallback every 5th beacon (~10s)
 
 /// Our own identity, advertised in every beacon and shown in the UI.
 #[derive(Clone, Serialize)]
@@ -190,7 +191,10 @@ fn discovery_recv_loop(app: AppHandle, socket: UdpSocket, peers: PeerMap, my_id:
     }
 }
 
-/// Periodically broadcast our beacon to the multicast group.
+/// Announce ourselves on the LAN. Two tiers:
+///   * fast path  — multicast + broadcast every beacon (cheap, normal networks)
+///   * fallback   — a unicast /24 sweep every `SWEEP_EVERY_TICKS` beacons, only
+///                  needed where the AP drops multicast AND broadcast.
 fn beacon_send_loop(socket: UdpSocket, identity: Identity) {
     let beacon = Beacon {
         node_id: identity.node_id.clone(),
@@ -200,31 +204,39 @@ fn beacon_send_loop(socket: UdpSocket, identity: Identity) {
     };
     let payload = serde_json::to_vec(&beacon).unwrap();
     let _ = socket.set_broadcast(true);
-    let targets = discovery_targets();
+    let fast = group_and_broadcast_targets();
+    let sweep = unicast_sweep_targets();
     eprintln!(
-        "[disco] beaconing as '{}' -> {} targets (multicast + broadcast + /24 unicast) every {}s",
+        "[disco] beaconing as '{}': {} fast targets every {}s, {} unicast-sweep fallback every {}s",
         identity.name,
-        targets.len(),
-        BEACON_INTERVAL.as_secs()
+        fast.len(),
+        BEACON_INTERVAL.as_secs(),
+        sweep.len(),
+        BEACON_INTERVAL.as_secs() * SWEEP_EVERY_TICKS
     );
+    let mut tick: u64 = 0;
     loop {
-        for dst in &targets {
+        for dst in &fast {
             if let Err(e) = socket.send_to(&payload, dst) {
-                // EHOSTDOWN(64)/EHOSTUNREACH(65)/ENETUNREACH(51) just mean no
-                // host at that swept address — expected, don't spam the log.
                 if !matches!(e.raw_os_error(), Some(64) | Some(65) | Some(51)) {
                     eprintln!("[disco] beacon send to {dst} error: {e}");
                 }
             }
         }
+        // Throttled unicast fallback (and an immediate sweep on the first tick).
+        if tick % SWEEP_EVERY_TICKS == 0 {
+            for dst in &sweep {
+                let _ = socket.send_to(&payload, dst); // EHOSTDOWN expected, ignore
+            }
+        }
+        tick = tick.wrapping_add(1);
         std::thread::sleep(BEACON_INTERVAL);
     }
 }
 
-/// Where to send beacons: the multicast group, the limited broadcast, and each
-/// interface's subnet-directed broadcast. Broadcast bypasses IGMP snooping, so
-/// discovery still works on routers that prune multicast between Wi-Fi clients.
-fn discovery_targets() -> Vec<SocketAddr> {
+/// Fast path: multicast group + limited broadcast + each interface's
+/// subnet-directed broadcast.
+fn group_and_broadcast_targets() -> Vec<SocketAddr> {
     let mut v = vec![
         SocketAddr::new(MCAST_GROUP.into(), DISCOVERY_PORT),
         SocketAddr::new(Ipv4Addr::BROADCAST.into(), DISCOVERY_PORT),
@@ -238,9 +250,22 @@ fn discovery_targets() -> Vec<SocketAddr> {
                 if let Some(bc) = v4.broadcast {
                     v.push(SocketAddr::new(bc.into(), DISCOVERY_PORT));
                 }
-                // Unicast sweep of the host's /24. This is the last-resort path
-                // for networks that drop BOTH multicast and broadcast between
-                // Wi-Fi clients but still allow client-to-client unicast.
+            }
+        }
+    }
+    v
+}
+
+/// Fallback: a unicast probe to every host in each /24, for networks that drop
+/// both multicast and broadcast between clients but still allow unicast.
+fn unicast_sweep_targets() -> Vec<SocketAddr> {
+    let mut v = Vec::new();
+    if let Ok(ifaces) = if_addrs::get_if_addrs() {
+        for iface in ifaces {
+            if iface.is_loopback() {
+                continue;
+            }
+            if let if_addrs::IfAddr::V4(v4) = iface.addr {
                 let o = v4.ip.octets();
                 for host in 1..=254u8 {
                     if host == o[3] {
