@@ -202,9 +202,9 @@ fn beacon_send_loop(socket: UdpSocket, identity: Identity) {
     let _ = socket.set_broadcast(true);
     let targets = discovery_targets();
     eprintln!(
-        "[disco] beaconing as '{}' -> {:?} every {}s",
+        "[disco] beaconing as '{}' -> {} targets (multicast + broadcast + /24 unicast) every {}s",
         identity.name,
-        targets,
+        targets.len(),
         BEACON_INTERVAL.as_secs()
     );
     loop {
@@ -233,6 +233,17 @@ fn discovery_targets() -> Vec<SocketAddr> {
             if let if_addrs::IfAddr::V4(v4) = iface.addr {
                 if let Some(bc) = v4.broadcast {
                     v.push(SocketAddr::new(bc.into(), DISCOVERY_PORT));
+                }
+                // Unicast sweep of the host's /24. This is the last-resort path
+                // for networks that drop BOTH multicast and broadcast between
+                // Wi-Fi clients but still allow client-to-client unicast.
+                let o = v4.ip.octets();
+                for host in 1..=254u8 {
+                    if host == o[3] {
+                        continue; // skip ourselves
+                    }
+                    let ip = Ipv4Addr::new(o[0], o[1], o[2], host);
+                    v.push(SocketAddr::new(ip.into(), DISCOVERY_PORT));
                 }
             }
         }
