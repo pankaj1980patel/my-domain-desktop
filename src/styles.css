@@ -161,7 +161,51 @@ button.ghost { background: transparent; border: 1px solid var(--border); color: 
 }
 .badge.udp { background: var(--udp); }
 .badge.tcp { background: var(--tcp); }
+.badge.ws { background: #4f8cff; }
 .badge.manual { background: #c9a227; font-weight: 600; }
+.badge.src-registry { background: #4f8cff; }
+.badge.src-lan { background: var(--green); }
+.badge.src-manual { background: #c9a227; }
+
+.hidden { display: none !important; }
+
+/* Auth gate */
+.auth-overlay {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); padding: 24px; z-index: 20;
+}
+.auth-card {
+  width: 380px; max-width: 100%; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 12px;
+}
+.auth-card h1 { margin: 0; font-size: 22px; }
+.auth-card label, .modal label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.auth-card input, .modal input { width: 100%; }
+.keyrow { display: flex; gap: 8px; }
+.keyrow input { flex: 1; }
+.row { display: flex; gap: 8px; }
+.row button { flex: 1; }
+button.secondary { background: var(--panel-2); border: 1px solid var(--border); }
+button.danger { background: #b3261e; }
+
+.topbar-actions { display: flex; gap: 8px; }
+
+.peer { justify-content: space-between; }
+.peer-actions { display: flex; gap: 6px; margin-left: auto; }
+.ws-btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 2px 9px; font-size: 12px; font-weight: 600; }
+.ws-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.entry.bad { opacity: 0.8; border-left-color: #b3261e; }
+
+/* Settings modal */
+.modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.5); z-index: 30; }
+.modal-card { width: 380px; max-width: 100%; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+.modal-card h2 { margin: 0; }
+.modal-card hr { border: none; border-top: 1px solid var(--border); width: 100%; margin: 4px 0; }
+.modal-card form { display: flex; flex-direction: column; gap: 12px; }
 
 .peer .remove {
   margin-left: auto;

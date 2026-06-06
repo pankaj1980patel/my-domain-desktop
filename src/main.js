@@ -1,187 +1,198 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-let peers = []; // current peer list from the backend
-
+let peers = [];
 const el = (id) => document.getElementById(id);
+const esc = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-function fmtTime(tsSecs) {
-  const d = new Date(tsSecs * 1000);
-  return d.toLocaleTimeString();
+function setStatus(id, msg, ok) {
+  const s = el(id);
+  if (!s) return;
+  s.textContent = msg;
+  s.className = "status " + (ok ? "ok" : msg ? "err" : "");
 }
 
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
+// ---------- auth ----------
+async function onAuth(e, isRegister) {
+  if (e) e.preventDefault();
+  const server = el("a-server").value.trim();
+  const user = el("a-user").value.trim();
+  const pass = el("a-pass").value;
+  const key = el("a-key").value;
+  if (!server || !user || !pass || !key) return setStatus("a-status", "All fields are required.", false);
+  setStatus("a-status", "Connecting…", true);
+  try {
+    await invoke(isRegister ? "auth_register" : "auth_login", {
+      serverUrl: server,
+      username: user,
+      password: pass,
+    });
+    await invoke("set_encryption_key", { passphrase: key });
+    await enterApp();
+  } catch (err) {
+    setStatus("a-status", String(err), false);
+  }
 }
 
-function renderPeers() {
-  const list = el("peer-list");
-  const select = el("peer-select");
+async function enterApp() {
+  el("auth").classList.add("hidden");
+  el("app").classList.remove("hidden");
+  const id = await invoke("get_identity");
+  el("me-line").textContent = `${id.name} · ${id.ip} · tcp ${id.tcp_port} · udp ${id.udp_port} · ws ${id.ws_port}`;
+  const info = await invoke("session_info");
+  el("set-who").textContent = `${info.username ?? ""} @ ${info.server_url ?? ""}`;
+  try { await invoke("refresh_from_server"); } catch (e) { console.warn(e); }
+  await loadPeers();
+}
+
+// ---------- peers ----------
+async function loadPeers() {
+  try { peers = await invoke("get_peers"); render(); } catch (e) { console.error(e); }
+}
+
+function render() {
   el("peer-count").textContent = peers.length;
-
-  // Peer cards
-  if (peers.length === 0) {
-    list.innerHTML = '<li class="empty" id="peer-empty">Searching the LAN for other devices…</li>';
+  const list = el("peer-list");
+  if (!peers.length) {
+    list.innerHTML = '<li class="empty">No peers yet — Refresh (registry) or Scan LAN.</li>';
   } else {
     list.innerHTML = peers
       .map(
-        (p) => `
-        <li class="peer">
-          <span class="dot online"></span>
+        (p) => `<li class="peer">
           <div class="peer-meta">
-            <strong>${escapeHtml(p.name)}${p.manual ? ' <span class="badge manual">manual</span>' : ""}</strong>
-            <span class="muted small">${escapeHtml(p.ip)} · tcp ${p.tcp_port} · udp ${p.udp_port}</span>
+            <strong>${esc(p.name)} <span class="badge src-${esc(p.source)}">${esc(p.source)}</span></strong>
+            <span class="muted small">${esc(p.ip)} · tcp ${p.tcp_port} · udp ${p.udp_port} · ws ${p.ws_port}</span>
           </div>
-          ${p.manual ? `<button class="remove" data-id="${escapeHtml(p.node_id)}" title="Remove">✕</button>` : ""}
+          <div class="peer-actions">
+            ${p.ws_port ? `<button class="ws-btn" data-id="${esc(p.node_id)}">Connect WS</button>` : ""}
+            ${p.source === "manual" ? `<button class="remove" data-id="${esc(p.node_id)}">✕</button>` : ""}
+          </div>
         </li>`
       )
       .join("");
   }
-
-  // Keep the dropdown in sync, preserving the current selection if possible.
-  const prev = select.value;
-  select.innerHTML = peers
-    .map((p) => `<option value="${p.node_id}">${escapeHtml(p.name)} (${escapeHtml(p.ip)})</option>`)
-    .join("");
-  if (peers.some((p) => p.node_id === prev)) select.value = prev;
+  const sel = el("peer-select");
+  const prev = sel.value;
+  sel.innerHTML = peers.map((p) => `<option value="${esc(p.node_id)}">${esc(p.name)} (${esc(p.ip)})</option>`).join("");
+  if (peers.some((p) => p.node_id === prev)) sel.value = prev;
 }
 
-function addLogEntry({ direction, peer, ip, protocol, text, ts }) {
+function addLog({ dir, peer, ip, protocol, text, ok = true }) {
   const log = el("log");
   if (log.querySelector(".empty")) log.innerHTML = "";
   const li = document.createElement("li");
-  li.className = `entry ${direction}`;
-  li.innerHTML = `
-    <div class="entry-head">
+  li.className = `entry ${dir} ${ok ? "" : "bad"}`;
+  li.innerHTML = `<div class="entry-head">
       <span class="badge ${protocol.toLowerCase()}">${protocol}</span>
-      <span class="dir">${direction === "in" ? "from" : "to"} <strong>${escapeHtml(peer)}</strong></span>
-      <span class="muted small">${escapeHtml(ip || "")}</span>
-      <span class="muted small time">${fmtTime(ts)}</span>
-    </div>
-    <div class="entry-text">${escapeHtml(text)}</div>`;
+      <span>${dir === "in" ? "from" : "to"} <strong>${esc(peer)}</strong></span>
+      <span class="muted small">${esc(ip || "")}</span>
+    </div><div class="entry-text">${esc(text)}</div>`;
   log.prepend(li);
 }
 
-function setStatus(msg, ok) {
-  const s = el("send-status");
-  s.textContent = msg;
-  s.className = "status " + (ok ? "ok" : "err");
-  if (msg) setTimeout(() => { if (s.textContent === msg) s.textContent = ""; }, 4000);
-}
-
-async function refreshPeers() {
-  try {
-    peers = await invoke("get_peers");
-    renderPeers();
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-async function init() {
-  // Show our own identity.
-  try {
-    const me = await invoke("get_identity");
-    el("me-name").textContent = me.name;
-    el("me-ip").textContent = `${me.ip} · tcp ${me.tcp_port} · udp ${me.udp_port}`;
-  } catch (e) {
-    el("me-name").textContent = "error starting network";
-    console.error(e);
-  }
-
-  await refreshPeers();
-
-  // Live updates pushed from Rust.
-  await listen("peers-updated", (event) => {
-    peers = event.payload;
-    renderPeers();
-  });
-
-  await listen("message-received", (event) => {
-    const m = event.payload;
-    addLogEntry({
-      direction: "in",
-      peer: m.from,
-      ip: m.ip,
-      protocol: m.protocol,
-      text: m.text,
-      ts: m.ts,
-    });
-  });
-
-  // Fallback poll in case an event is missed.
-  setInterval(refreshPeers, 5000);
-
-  el("send-form").addEventListener("submit", onSend);
-  el("clear-log").addEventListener("click", () => {
-    el("log").innerHTML = '<li class="empty">No messages yet.</li>';
-  });
-  el("manual-form").addEventListener("submit", onAddManual);
-
-  // Remove button on manually-added peers (event delegation).
-  el("peer-list").addEventListener("click", async (e) => {
-    const btn = e.target.closest(".remove");
-    if (!btn) return;
-    await invoke("remove_peer", { nodeId: btn.dataset.id });
-    await refreshPeers();
-  });
-}
-
-async function onAddManual(e) {
-  e.preventDefault();
-  const s = el("manual-status");
-  const name = el("m-name").value.trim();
-  const ip = el("m-ip").value.trim();
-  const tcpPort = parseInt(el("m-tcp").value, 10) || 0;
-  const udpPort = parseInt(el("m-udp").value, 10) || 0;
-
-  if (!ip) { s.textContent = "Enter an IP."; s.className = "status err"; return; }
-  if (!tcpPort && !udpPort) {
-    s.textContent = "Enter at least one port (TCP or UDP).";
-    s.className = "status err";
-    return;
-  }
-  try {
-    await invoke("add_manual_peer", { name, ip, tcpPort, udpPort });
-    await refreshPeers();
-    el("m-name").value = el("m-ip").value = el("m-tcp").value = el("m-udp").value = "";
-    s.textContent = `Added ${ip}.`;
-    s.className = "status ok";
-  } catch (err) {
-    s.textContent = String(err);
-    s.className = "status err";
-  }
-}
-
+// ---------- send ----------
 async function onSend(e) {
   e.preventDefault();
   const node_id = el("peer-select").value;
   const protocol = document.querySelector('input[name="proto"]:checked').value;
   const text = el("msg-input").value.trim();
-
-  if (!node_id) return setStatus("Pick a peer first.", false);
-  if (!text) return setStatus("Message is empty.", false);
-
+  if (!node_id) return setStatus("send-status", "Pick a peer.", false);
+  if (!text) return setStatus("send-status", "Message is empty.", false);
   const peer = peers.find((p) => p.node_id === node_id);
   el("send-btn").disabled = true;
   try {
-    await invoke("send_message", { nodeId: node_id, protocol, text });
-    addLogEntry({
-      direction: "out",
-      peer: peer ? peer.name : "peer",
-      ip: peer ? peer.ip : "",
-      protocol,
-      text,
-      ts: Math.floor(Date.now() / 1000),
-    });
+    if (protocol === "WS") {
+      await invoke("connect_ws", { nodeId: node_id });
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    try {
+      await invoke("send_message", { nodeId: node_id, protocol, text });
+    } catch (err) {
+      if (protocol === "WS" && String(err).includes("no WebSocket")) {
+        await new Promise((r) => setTimeout(r, 600));
+        await invoke("send_message", { nodeId: node_id, protocol, text });
+      } else throw err;
+    }
+    addLog({ dir: "out", peer: peer ? peer.name : "peer", ip: peer ? peer.ip : "", protocol, text });
     el("msg-input").value = "";
-    setStatus(`Sent over ${protocol}.`, true);
+    setStatus("send-status", `Sent over ${protocol}.`, true);
   } catch (err) {
-    setStatus(String(err), false);
+    setStatus("send-status", String(err), false);
   } finally {
     el("send-btn").disabled = false;
+  }
+}
+
+// ---------- init ----------
+async function init() {
+  const saved = await invoke("get_saved_session");
+  if (saved.server_url) el("a-server").value = saved.server_url;
+  if (saved.username) el("a-user").value = saved.username;
+
+  el("auth-form").addEventListener("submit", (e) => onAuth(e, false));
+  el("a-register").addEventListener("click", (e) => onAuth(e, true));
+  el("a-genkey").addEventListener("click", async () => { el("a-key").value = await invoke("generate_key"); });
+
+  el("send-form").addEventListener("submit", onSend);
+  el("clear-log").addEventListener("click", () => { el("log").innerHTML = '<li class="empty">No messages yet.</li>'; });
+  el("btn-refresh").addEventListener("click", async () => { try { await invoke("refresh_from_server"); } catch (e) { alert(e); } });
+  el("btn-scan").addEventListener("click", () => invoke("scan_lan"));
+  el("btn-settings").addEventListener("click", () => el("settings").classList.remove("hidden"));
+
+  el("manual-form").addEventListener("submit", onAddManual);
+  el("peer-list").addEventListener("click", async (e) => {
+    const ws = e.target.closest(".ws-btn");
+    const rm = e.target.closest(".remove");
+    if (ws) { try { await invoke("connect_ws", { nodeId: ws.dataset.id }); ws.textContent = "WS ✓"; } catch (err) { alert(err); } }
+    if (rm) { await invoke("remove_peer", { nodeId: rm.dataset.id }); await loadPeers(); }
+  });
+
+  // settings
+  el("s-genkey").addEventListener("click", async () => { el("s-key").value = await invoke("generate_key"); });
+  el("s-close").addEventListener("click", () => el("settings").classList.add("hidden"));
+  el("settings-form").addEventListener("submit", onUpdateKey);
+  el("s-logout").addEventListener("click", async () => {
+    await invoke("logout");
+    location.reload();
+  });
+
+  await listen("peers-updated", (ev) => { peers = ev.payload; render(); });
+  await listen("message-received", (ev) => {
+    const m = ev.payload;
+    addLog({ dir: "in", peer: m.from, ip: m.ip, protocol: m.protocol, text: m.text, ok: m.ok });
+  });
+}
+
+async function onAddManual(e) {
+  e.preventDefault();
+  const name = el("m-name").value.trim();
+  const ip = el("m-ip").value.trim();
+  const tcpPort = parseInt(el("m-tcp").value, 10) || 0;
+  const udpPort = parseInt(el("m-udp").value, 10) || 0;
+  const wsPort = parseInt(el("m-ws").value, 10) || 0;
+  if (!ip) return setStatus("manual-status", "Enter an IP.", false);
+  try {
+    await invoke("add_manual_peer", { name, ip, tcpPort, udpPort, wsPort });
+    await loadPeers();
+    el("m-name").value = el("m-ip").value = el("m-tcp").value = el("m-udp").value = el("m-ws").value = "";
+    setStatus("manual-status", `Added ${ip}.`, true);
+  } catch (err) {
+    setStatus("manual-status", String(err), false);
+  }
+}
+
+async function onUpdateKey(e) {
+  e.preventDefault();
+  const key = el("s-key").value;
+  const pass = el("s-pass").value;
+  if (!key || !pass) return setStatus("s-status", "Both fields required.", false);
+  try {
+    await invoke("update_encryption_key", { newPassphrase: key, password: pass });
+    setStatus("s-status", "Encryption key updated.", true);
+    el("s-key").value = el("s-pass").value = "";
+  } catch (err) {
+    setStatus("s-status", String(err), false);
   }
 }
 

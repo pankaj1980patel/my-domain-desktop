@@ -9,81 +9,114 @@
   </head>
 
   <body>
-    <header class="topbar">
-      <div>
-        <h1>LAN Messenger</h1>
-        <p class="subtitle">Discover devices on your network and message them over UDP / TCP.</p>
-      </div>
-      <div class="me" id="me">
-        <span class="dot"></span>
-        <span id="me-name">starting…</span>
-        <span id="me-ip" class="muted"></span>
-      </div>
-    </header>
-
-    <main class="layout">
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Peers <span class="count" id="peer-count">0</span></h2>
-          <span class="muted small">auto-refreshing</span>
+    <!-- Auth gate: shown until logged in + encryption key set -->
+    <div id="auth" class="auth-overlay">
+      <form id="auth-form" class="auth-card">
+        <h1>my-domain</h1>
+        <p class="muted small">Log in, then set your encryption key to unlock messaging.</p>
+        <label>Server URL<input id="a-server" placeholder="http://192.168.0.10:8080" required /></label>
+        <label>Username<input id="a-user" autocomplete="username" required /></label>
+        <label>Password<input id="a-pass" type="password" autocomplete="current-password" required /></label>
+        <label>Encryption key
+          <div class="keyrow">
+            <input id="a-key" placeholder="shared secret for E2EE" required />
+            <button type="button" id="a-genkey" class="ghost">Generate</button>
+          </div>
+        </label>
+        <div class="row">
+          <button type="submit" id="a-login">Log in</button>
+          <button type="button" id="a-register" class="secondary">Register</button>
         </div>
-        <ul id="peer-list" class="peer-list">
-          <li class="empty" id="peer-empty">Searching the LAN for other devices…</li>
-        </ul>
+        <p id="a-status" class="status"></p>
+        <p class="muted small">Use the <strong>same encryption key</strong> on all your devices, or they can't read each other's messages.</p>
+      </form>
+    </div>
 
-        <details class="manual" id="manual">
-          <summary>Add a peer manually</summary>
-          <p class="muted small">
-            If discovery is blocked, type the other device's IP and the TCP/UDP ports
-            shown in its app header.
-          </p>
-          <form id="manual-form" class="manual-form">
-            <input id="m-name" placeholder="Name (optional)" />
-            <input id="m-ip" placeholder="IP e.g. 192.168.0.105" required />
-            <div class="ports">
-              <input id="m-tcp" type="number" min="0" max="65535" placeholder="TCP port" />
-              <input id="m-udp" type="number" min="0" max="65535" placeholder="UDP port" />
-            </div>
-            <button type="submit">Add peer</button>
-            <p id="manual-status" class="status"></p>
-          </form>
-        </details>
-      </section>
+    <!-- Main app -->
+    <div id="app" class="hidden">
+      <header class="topbar">
+        <div>
+          <h1>LAN Messenger</h1>
+          <p class="subtitle" id="me-line">…</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-refresh" class="ghost" title="Re-register and fetch peers">Refresh</button>
+          <button id="btn-scan" class="ghost" title="Discover peers over the LAN">Scan LAN</button>
+          <button id="btn-settings" class="ghost">⚙ Settings</button>
+        </div>
+      </header>
 
-      <section class="panel">
-        <div class="panel-head"><h2>Compose</h2></div>
-        <form id="send-form" class="compose">
-          <label>
-            To
-            <select id="peer-select" required></select>
-          </label>
-          <label>
-            Protocol
-            <div class="seg">
-              <input type="radio" name="proto" id="proto-udp" value="UDP" checked />
-              <label for="proto-udp">UDP</label>
-              <input type="radio" name="proto" id="proto-tcp" value="TCP" />
-              <label for="proto-tcp">TCP</label>
-            </div>
-          </label>
-          <label>
-            Message
+      <main class="layout">
+        <section class="panel">
+          <div class="panel-head"><h2>Peers <span class="count" id="peer-count">0</span></h2></div>
+          <ul id="peer-list" class="peer-list">
+            <li class="empty">No peers yet — Refresh (registry) or Scan LAN.</li>
+          </ul>
+          <details class="manual">
+            <summary>Add a peer manually</summary>
+            <form id="manual-form" class="manual-form">
+              <input id="m-name" placeholder="Name (optional)" />
+              <input id="m-ip" placeholder="IP e.g. 192.168.0.105" required />
+              <div class="ports">
+                <input id="m-tcp" type="number" min="0" max="65535" placeholder="TCP" />
+                <input id="m-udp" type="number" min="0" max="65535" placeholder="UDP" />
+                <input id="m-ws" type="number" min="0" max="65535" placeholder="WS" />
+              </div>
+              <button type="submit">Add peer</button>
+              <p id="manual-status" class="status"></p>
+            </form>
+          </details>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Compose</h2></div>
+          <form id="send-form" class="compose">
+            <label>To<select id="peer-select" required></select></label>
+            <label>Transport
+              <div class="seg">
+                <input type="radio" name="proto" id="proto-udp" value="UDP" checked /><label for="proto-udp">UDP</label>
+                <input type="radio" name="proto" id="proto-tcp" value="TCP" /><label for="proto-tcp">TCP</label>
+                <input type="radio" name="proto" id="proto-ws" value="WS" /><label for="proto-ws">WS</label>
+              </div>
+            </label>
             <textarea id="msg-input" rows="3" placeholder="Type a message…" required></textarea>
-          </label>
-          <button type="submit" id="send-btn">Send</button>
-          <p id="send-status" class="status"></p>
-        </form>
-      </section>
+            <button type="submit" id="send-btn">Send</button>
+            <p id="send-status" class="status"></p>
+          </form>
+        </section>
 
-      <section class="panel wide">
-        <div class="panel-head">
-          <h2>Messages</h2>
-          <button type="button" id="clear-log" class="ghost">Clear</button>
-        </div>
-        <ul id="log" class="log">
-          <li class="empty">No messages yet.</li>
-        </ul>
-      </section>
-    </main>
+        <section class="panel wide">
+          <div class="panel-head">
+            <h2>Messages</h2>
+            <button type="button" id="clear-log" class="ghost">Clear</button>
+          </div>
+          <ul id="log" class="log"><li class="empty">No messages yet.</li></ul>
+        </section>
+      </main>
+    </div>
+
+    <!-- Settings modal -->
+    <div id="settings" class="modal hidden">
+      <div class="modal-card">
+        <h2>Settings</h2>
+        <p class="muted small" id="set-who"></p>
+        <form id="settings-form">
+          <label>New encryption key
+            <div class="keyrow">
+              <input id="s-key" placeholder="new shared secret" required />
+              <button type="button" id="s-genkey" class="ghost">Generate</button>
+            </div>
+          </label>
+          <label>Confirm password<input id="s-pass" type="password" autocomplete="current-password" required /></label>
+          <div class="row">
+            <button type="submit">Update key</button>
+            <button type="button" id="s-close" class="secondary">Close</button>
+          </div>
+          <p id="s-status" class="status"></p>
+        </form>
+        <hr />
+        <button type="button" id="s-logout" class="danger">Log out</button>
+      </div>
+    </div>
   </body>
 </html>
