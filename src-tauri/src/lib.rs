@@ -195,20 +195,45 @@ fn beacon_send_loop(socket: UdpSocket, identity: Identity) {
         udp_port: identity.udp_port,
     };
     let payload = serde_json::to_vec(&beacon).unwrap();
-    let dst = SocketAddr::new(MCAST_GROUP.into(), DISCOVERY_PORT);
+    let _ = socket.set_broadcast(true);
+    let targets = discovery_targets();
     eprintln!(
-        "[disco] beaconing as '{}' -> {}:{} every {}s",
+        "[disco] beaconing as '{}' -> {:?} every {}s",
         identity.name,
-        MCAST_GROUP,
-        DISCOVERY_PORT,
+        targets,
         BEACON_INTERVAL.as_secs()
     );
     loop {
-        if let Err(e) = socket.send_to(&payload, dst) {
-            eprintln!("[disco] beacon send error: {e}");
+        for dst in &targets {
+            if let Err(e) = socket.send_to(&payload, dst) {
+                eprintln!("[disco] beacon send to {dst} error: {e}");
+            }
         }
         std::thread::sleep(BEACON_INTERVAL);
     }
+}
+
+/// Where to send beacons: the multicast group, the limited broadcast, and each
+/// interface's subnet-directed broadcast. Broadcast bypasses IGMP snooping, so
+/// discovery still works on routers that prune multicast between Wi-Fi clients.
+fn discovery_targets() -> Vec<SocketAddr> {
+    let mut v = vec![
+        SocketAddr::new(MCAST_GROUP.into(), DISCOVERY_PORT),
+        SocketAddr::new(Ipv4Addr::BROADCAST.into(), DISCOVERY_PORT),
+    ];
+    if let Ok(ifaces) = if_addrs::get_if_addrs() {
+        for iface in ifaces {
+            if iface.is_loopback() {
+                continue;
+            }
+            if let if_addrs::IfAddr::V4(v4) = iface.addr {
+                if let Some(bc) = v4.broadcast {
+                    v.push(SocketAddr::new(bc.into(), DISCOVERY_PORT));
+                }
+            }
+        }
+    }
+    v
 }
 
 /// Drop peers we haven't heard from in a while and refresh the UI.
