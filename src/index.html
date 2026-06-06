@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LAN Messenger</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>LAN Messenger</h1>
+        <p class="subtitle">Discover devices on your network and message them over UDP / TCP.</p>
+      </div>
+      <div class="me" id="me">
+        <span class="dot"></span>
+        <span id="me-name">starting…</span>
+        <span id="me-ip" class="muted"></span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Peers <span class="count" id="peer-count">0</span></h2>
+          <span class="muted small">auto-refreshing</span>
+        </div>
+        <ul id="peer-list" class="peer-list">
+          <li class="empty" id="peer-empty">Searching the LAN for other devices…</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Compose</h2></div>
+        <form id="send-form" class="compose">
+          <label>
+            To
+            <select id="peer-select" required></select>
+          </label>
+          <label>
+            Protocol
+            <div class="seg">
+              <input type="radio" name="proto" id="proto-udp" value="UDP" checked />
+              <label for="proto-udp">UDP</label>
+              <input type="radio" name="proto" id="proto-tcp" value="TCP" />
+              <label for="proto-tcp">TCP</label>
+            </div>
+          </label>
+          <label>
+            Message
+            <textarea id="msg-input" rows="3" placeholder="Type a message…" required></textarea>
+          </label>
+          <button type="submit" id="send-btn">Send</button>
+          <p id="send-status" class="status"></p>
+        </form>
+      </section>
+
+      <section class="panel wide">
+        <div class="panel-head">
+          <h2>Messages</h2>
+          <button type="button" id="clear-log" class="ghost">Clear</button>
+        </div>
+        <ul id="log" class="log">
+          <li class="empty">No messages yet.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
