@@ -210,7 +210,11 @@ fn beacon_send_loop(socket: UdpSocket, identity: Identity) {
     loop {
         for dst in &targets {
             if let Err(e) = socket.send_to(&payload, dst) {
-                eprintln!("[disco] beacon send to {dst} error: {e}");
+                // EHOSTDOWN(64)/EHOSTUNREACH(65)/ENETUNREACH(51) just mean no
+                // host at that swept address — expected, don't spam the log.
+                if !matches!(e.raw_os_error(), Some(64) | Some(65) | Some(51)) {
+                    eprintln!("[disco] beacon send to {dst} error: {e}");
+                }
             }
         }
         std::thread::sleep(BEACON_INTERVAL);
