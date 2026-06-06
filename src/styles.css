@@ -161,3 +161,23 @@ button.ghost { background: transparent; border: 1px solid var(--border); color: 
 }
 .badge.udp { background: var(--udp); }
 .badge.tcp { background: var(--tcp); }
+.badge.manual { background: #c9a227; font-weight: 600; }
+
+.peer .remove {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.peer .remove:hover { color: #ff6b6b; border-color: #ff6b6b; }
+
+.manual { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.manual summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.manual-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.manual-form .ports { display: flex; gap: 8px; }
+.manual-form .ports input { width: 100%; }
+.manual-form input { width: 100%; }

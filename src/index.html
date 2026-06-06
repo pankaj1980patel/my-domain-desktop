@@ -30,6 +30,24 @@
         <ul id="peer-list" class="peer-list">
           <li class="empty" id="peer-empty">Searching the LAN for other devices…</li>
         </ul>
+
+        <details class="manual" id="manual">
+          <summary>Add a peer manually</summary>
+          <p class="muted small">
+            If discovery is blocked, type the other device's IP and the TCP/UDP ports
+            shown in its app header.
+          </p>
+          <form id="manual-form" class="manual-form">
+            <input id="m-name" placeholder="Name (optional)" />
+            <input id="m-ip" placeholder="IP e.g. 192.168.0.105" required />
+            <div class="ports">
+              <input id="m-tcp" type="number" min="0" max="65535" placeholder="TCP port" />
+              <input id="m-udp" type="number" min="0" max="65535" placeholder="UDP port" />
+            </div>
+            <button type="submit">Add peer</button>
+            <p id="manual-status" class="status"></p>
+          </form>
+        </details>
       </section>
 
       <section class="panel">

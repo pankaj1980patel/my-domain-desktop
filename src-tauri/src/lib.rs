@@ -48,6 +48,9 @@ struct Peer {
     tcp_port: u16,
     udp_port: u16,
     last_seen: u64,
+    /// Manually added (IP/port typed in); never auto-pruned.
+    #[serde(default)]
+    manual: bool,
 }
 
 /// Wire format for an actual chat message (TCP body or UDP datagram).
@@ -168,6 +171,7 @@ fn discovery_recv_loop(app: AppHandle, socket: UdpSocket, peers: PeerMap, my_id:
             tcp_port: beacon.tcp_port,
             udp_port: beacon.udp_port,
             last_seen: now_secs(),
+            manual: false,
         };
         let is_new = {
             let mut map = peers.lock().unwrap();
@@ -244,7 +248,7 @@ fn prune_loop(app: AppHandle, peers: PeerMap) {
             let mut map = peers.lock().unwrap();
             let before = map.len();
             let cutoff = now_secs().saturating_sub(PEER_TIMEOUT_SECS);
-            map.retain(|_, p| p.last_seen >= cutoff);
+            map.retain(|_, p| p.manual || p.last_seen >= cutoff);
             before != map.len()
         };
         if removed {
@@ -320,6 +324,46 @@ fn get_identity(state: State<AppState>) -> Identity {
 #[tauri::command]
 fn get_peers(state: State<AppState>) -> Vec<Peer> {
     state.peers.lock().unwrap().values().cloned().collect()
+}
+
+/// Add a peer by hand (when discovery is blocked). Read the IP and the tcp/udp
+/// ports off the other device's app header. Either port may be 0 if you only
+/// intend to use the other protocol.
+#[tauri::command]
+fn add_manual_peer(
+    name: String,
+    ip: String,
+    tcp_port: u16,
+    udp_port: u16,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let parsed: Ipv4Addr = ip.trim().parse().map_err(|_| format!("invalid IPv4: {ip}"))?;
+    let node_id = format!("manual:{parsed}");
+    let display = if name.trim().is_empty() {
+        parsed.to_string()
+    } else {
+        name.trim().to_string()
+    };
+    let peer = Peer {
+        node_id: node_id.clone(),
+        name: display,
+        ip: parsed.to_string(),
+        tcp_port,
+        udp_port,
+        last_seen: now_secs(),
+        manual: true,
+    };
+    state.peers.lock().unwrap().insert(node_id, peer);
+    emit_peers(&app, &state.peers);
+    Ok(())
+}
+
+/// Remove a peer (used for manually-added entries).
+#[tauri::command]
+fn remove_peer(node_id: String, state: State<AppState>, app: AppHandle) {
+    state.peers.lock().unwrap().remove(&node_id);
+    emit_peers(&app, &state.peers);
 }
 
 #[tauri::command]
@@ -466,7 +510,9 @@ pub fn run() {
             get_identity,
             get_peers,
             set_display_name,
-            send_message
+            send_message,
+            add_manual_peer,
+            remove_peer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

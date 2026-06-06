@@ -31,9 +31,10 @@ function renderPeers() {
         <li class="peer">
           <span class="dot online"></span>
           <div class="peer-meta">
-            <strong>${escapeHtml(p.name)}</strong>
+            <strong>${escapeHtml(p.name)}${p.manual ? ' <span class="badge manual">manual</span>' : ""}</strong>
             <span class="muted small">${escapeHtml(p.ip)} · tcp ${p.tcp_port} · udp ${p.udp_port}</span>
           </div>
+          ${p.manual ? `<button class="remove" data-id="${escapeHtml(p.node_id)}" title="Remove">✕</button>` : ""}
         </li>`
       )
       .join("");
@@ -117,6 +118,41 @@ async function init() {
   el("clear-log").addEventListener("click", () => {
     el("log").innerHTML = '<li class="empty">No messages yet.</li>';
   });
+  el("manual-form").addEventListener("submit", onAddManual);
+
+  // Remove button on manually-added peers (event delegation).
+  el("peer-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".remove");
+    if (!btn) return;
+    await invoke("remove_peer", { nodeId: btn.dataset.id });
+    await refreshPeers();
+  });
+}
+
+async function onAddManual(e) {
+  e.preventDefault();
+  const s = el("manual-status");
+  const name = el("m-name").value.trim();
+  const ip = el("m-ip").value.trim();
+  const tcpPort = parseInt(el("m-tcp").value, 10) || 0;
+  const udpPort = parseInt(el("m-udp").value, 10) || 0;
+
+  if (!ip) { s.textContent = "Enter an IP."; s.className = "status err"; return; }
+  if (!tcpPort && !udpPort) {
+    s.textContent = "Enter at least one port (TCP or UDP).";
+    s.className = "status err";
+    return;
+  }
+  try {
+    await invoke("add_manual_peer", { name, ip, tcpPort, udpPort });
+    await refreshPeers();
+    el("m-name").value = el("m-ip").value = el("m-tcp").value = el("m-udp").value = "";
+    s.textContent = `Added ${ip}.`;
+    s.className = "status ok";
+  } catch (err) {
+    s.textContent = String(err);
+    s.className = "status err";
+  }
 }
 
 async function onSend(e) {
