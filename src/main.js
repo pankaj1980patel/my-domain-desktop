@@ -2,6 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 let peers = [];
+const connected = new Set(); // node_ids with a live WebSocket (reported by the backend)
 const el = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,7 +66,7 @@ function render() {
             <span class="muted small">${esc(p.ip)} · tcp ${p.tcp_port} · udp ${p.udp_port} · ws ${p.ws_port}</span>
           </div>
           <div class="peer-actions">
-            ${p.ws_port ? `<button class="ws-btn" data-id="${esc(p.node_id)}">Connect WS</button>` : ""}
+            ${p.ws_port ? `<button class="ws-btn${connected.has(p.node_id) ? " connected" : ""}" data-id="${esc(p.node_id)}">${connected.has(p.node_id) ? "WS ✓" : "Connect WS"}</button>` : ""}
             ${p.source === "manual" ? `<button class="remove" data-id="${esc(p.node_id)}">✕</button>` : ""}
           </div>
         </li>`
@@ -144,7 +145,7 @@ async function init() {
   el("peer-list").addEventListener("click", async (e) => {
     const ws = e.target.closest(".ws-btn");
     const rm = e.target.closest(".remove");
-    if (ws) { try { await invoke("connect_ws", { nodeId: ws.dataset.id }); ws.textContent = "WS ✓"; } catch (err) { alert(err); } }
+    if (ws) { ws.textContent = "Connecting…"; try { await invoke("connect_ws", { nodeId: ws.dataset.id }); } catch (err) { ws.textContent = "Connect WS"; alert(err); } }
     if (rm) { await invoke("remove_peer", { nodeId: rm.dataset.id }); await loadPeers(); }
   });
 
@@ -158,6 +159,8 @@ async function init() {
   });
 
   await listen("peers-updated", (ev) => { peers = ev.payload; render(); });
+  await listen("ws-connected", (ev) => { connected.add(ev.payload); render(); });
+  await listen("ws-disconnected", (ev) => { connected.delete(ev.payload); render(); });
   await listen("message-received", (ev) => {
     const m = ev.payload;
     addLog({ dir: "in", peer: m.from, ip: m.ip, protocol: m.protocol, text: m.text, ok: m.ok });

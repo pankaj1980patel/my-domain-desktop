@@ -538,6 +538,7 @@ fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocke
                             }
                             guard.insert(node_id.clone(), (my_conn_id, tx.clone()));
                             drop(guard);
+                            let _ = app.emit("ws-connected", &node_id);
                             peer_id = Some(node_id);
                         }
                         WsFrame::Msg { nonce, ciphertext } => {
@@ -573,6 +574,8 @@ fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocke
         let mut g = ctx.conns.lock().unwrap();
         if g.get(&pid).map(|(id, _)| *id == my_conn_id).unwrap_or(false) {
             g.remove(&pid);
+            drop(g);
+            let _ = app.emit("ws-disconnected", &pid);
         }
     }
 }
