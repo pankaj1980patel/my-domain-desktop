@@ -221,8 +221,22 @@ struct RegistryDevice {
     ws_port: u16,
 }
 
+/// Normalize a user-entered server URL to just `scheme://host[:port]`, dropping
+/// any path/query so pasting a full endpoint (e.g. `.../auth/login`) doesn't get
+/// the path appended twice.
 fn base(url: &str) -> String {
-    url.trim_end_matches('/').to_string()
+    let u = url.trim().trim_end_matches('/');
+    match u.find("://") {
+        Some(i) => {
+            let host_start = i + 3;
+            let host_end = u[host_start..]
+                .find('/')
+                .map(|j| host_start + j)
+                .unwrap_or(u.len());
+            u[..host_end].to_string()
+        }
+        None => u.to_string(),
+    }
 }
 
 fn http_err(e: ureq::Error) -> String {
