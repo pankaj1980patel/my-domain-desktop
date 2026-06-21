@@ -14,7 +14,7 @@
       <form id="auth-form" class="auth-card">
         <h1>my-domain</h1>
         <p class="muted small">Log in, then set your encryption key to unlock messaging.</p>
-        <label>Server URL<input id="a-server" placeholder="http://192.168.0.10:8080" required /></label>
+        <label>Server URL<input id="a-server" placeholder="http://192.168.0.10:6969" required /></label>
         <label>Username<input id="a-user" autocomplete="username" required /></label>
         <label>Password<input id="a-pass" type="password" autocomplete="current-password" required /></label>
         <label>Encryption key
@@ -83,6 +83,20 @@
             <button type="submit" id="send-btn">Send</button>
             <p id="send-status" class="status"></p>
           </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Clipboard</h2></div>
+          <div class="compose">
+            <label class="row" style="align-items:center;gap:8px;justify-content:space-between">
+              <span>Auto-sync (active)</span>
+              <button type="button" id="clip-toggle" class="ghost">Enable</button>
+            </label>
+            <p class="muted small">When on, your clipboard changes broadcast to all peers (and incoming ones are applied) until you disable it.</p>
+            <label>Get clipboard from<select id="clip-peer-select"></select></label>
+            <button type="button" id="clip-get-btn">Get clipboard (once)</button>
+            <p id="clip-status" class="status"></p>
+          </div>
         </section>
 
         <section class="panel wide">

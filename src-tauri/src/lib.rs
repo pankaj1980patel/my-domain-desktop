@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -110,6 +110,8 @@ type KeyHolder = Arc<Mutex<Option<[u8; 32]>>>;
 /// node_id -> (connection id, outgoing-frame sender). One entry per peer; a
 /// duplicate connection to an already-connected peer is dropped.
 type WsConns = Arc<Mutex<HashMap<String, (u64, mpsc::Sender<String>)>>>;
+/// node_id -> oneshot-ish sender awaiting that peer's clipboard pull response.
+type ClipPending = Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>;
 
 static WS_CONN_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -126,6 +128,81 @@ struct AppState {
     peers: PeerMap,
     disco_send: Arc<UdpSocket>,
     ws_conns: WsConns,
+    /// Clipboard auto-sync ("active" mode) on/off.
+    clip_active: Arc<AtomicBool>,
+    /// Last clipboard value we sent or applied — echo guard for auto-sync.
+    clip_last: Arc<Mutex<String>>,
+    /// In-flight "get clipboard" pulls, keyed by the peer node_id.
+    clip_pending: ClipPending,
+}
+
+/// Shared handles the network receive loops + clipboard watcher need. Bundles
+/// what used to be `WsCtx` plus the clipboard state, so any transport can route
+/// clipboard control messages.
+#[derive(Clone)]
+struct NetCtx {
+    identity: Arc<Mutex<Identity>>,
+    key: KeyHolder,
+    peers: PeerMap,
+    ws_conns: WsConns,
+    clip_active: Arc<AtomicBool>,
+    clip_last: Arc<Mutex<String>>,
+    clip_pending: ClipPending,
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard (active auto-sync + passive pull). The control messages ride inside
+// the normal encrypted `Plaintext.text` as a small JSON object:
+//   {"type":"clipboard","content":"…","from":"<node_id>"}           push / response value
+//   {"type":"clipboard_request","from":"<node_id>"}                 passive pull request
+//   {"type":"clipboard_response","content":"…","from":"<node_id>"}  reply to a pull
+// `type:"clipboard"` is wire-compatible with the Android always-on sync.
+// ---------------------------------------------------------------------------
+
+fn clipboard_get() -> Option<String> {
+    arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())
+}
+
+fn clipboard_set(text: &str) {
+    if let Ok(mut c) = arboard::Clipboard::new() {
+        let _ = c.set_text(text.to_owned());
+    }
+}
+
+/// Best transport for a one-off control message: the live WS if we have one,
+/// else UDP (matches the Android side's choice).
+fn clip_proto(ctx: &NetCtx, node_id: &str) -> &'static str {
+    if ctx.ws_conns.lock().unwrap().contains_key(node_id) {
+        "WS"
+    } else {
+        "UDP"
+    }
+}
+
+fn clip_send_to(ctx: &NetCtx, node_id: &str, text: &str) {
+    let from = ctx.identity.lock().unwrap().name.clone();
+    let proto = clip_proto(ctx, node_id);
+    let _ = send_payload(&ctx.peers, &ctx.ws_conns, &ctx.key, &from, node_id, proto, text);
+}
+
+fn clip_broadcast(ctx: &NetCtx, text: &str) {
+    let ids: Vec<String> = ctx.peers.lock().unwrap().keys().cloned().collect();
+    for id in ids {
+        clip_send_to(ctx, &id, text);
+    }
+}
+
+/// Build the shared receive/clipboard context from app state + the session key.
+fn net_ctx(state: &AppState, key: &KeyHolder) -> NetCtx {
+    NetCtx {
+        identity: state.identity.clone(),
+        key: key.clone(),
+        peers: state.peers.clone(),
+        ws_conns: state.ws_conns.clone(),
+        clip_active: state.clip_active.clone(),
+        clip_last: state.clip_last.clone(),
+        clip_pending: state.clip_pending.clone(),
+    }
 }
 
 fn now_secs() -> u64 {
@@ -198,6 +275,75 @@ fn envelope_to_message(key: &KeyHolder, env: &Envelope, ip: String, protocol: &s
         ts: now_secs(),
         ok: false,
     }
+}
+
+/// Decrypt and dispatch an incoming envelope: clipboard control messages are
+/// handled in-band (and never shown as chat); everything else is emitted to the
+/// UI as a normal `message-received`.
+fn handle_incoming(app: &AppHandle, ctx: &NetCtx, env: &Envelope, ip: String, protocol: &str) {
+    let pt = {
+        let guard = ctx.key.lock().unwrap();
+        guard.as_ref().and_then(|k| decrypt(k, env))
+    };
+    let Some(pt) = pt else {
+        let _ = app.emit("message-received", envelope_to_message(&ctx.key, env, ip, protocol));
+        return;
+    };
+    let Ok(msg) = serde_json::from_slice::<Plaintext>(&pt) else {
+        return;
+    };
+
+    // Clipboard control? (a small JSON object carrying a known "type").
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg.text) {
+        if let Some(kind) = v.get("type").and_then(|t| t.as_str()) {
+            let content = || v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            let sender = || v.get("from").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            match kind {
+                // Unsolicited push from a peer in active mode: only apply if we
+                // too have auto-sync enabled.
+                "clipboard" => {
+                    if ctx.clip_active.load(Ordering::Relaxed) {
+                        let c = content();
+                        *ctx.clip_last.lock().unwrap() = c.clone();
+                        clipboard_set(&c);
+                        let _ = app.emit(
+                            "clipboard-event",
+                            serde_json::json!({ "from": msg.from, "ip": ip, "protocol": protocol, "action": "synced" }),
+                        );
+                    }
+                    return;
+                }
+                // A peer is pulling our clipboard: reply with the current value.
+                "clipboard_request" => {
+                    let requester = sender();
+                    if !requester.is_empty() {
+                        let me = ctx.identity.lock().unwrap().node_id.clone();
+                        let resp = serde_json::json!({
+                            "type": "clipboard_response",
+                            "content": clipboard_get().unwrap_or_default(),
+                            "from": me,
+                        })
+                        .to_string();
+                        clip_send_to(ctx, &requester, &resp);
+                    }
+                    return;
+                }
+                // Reply to a pull we initiated: hand it to the waiting command.
+                "clipboard_response" => {
+                    if let Some(tx) = ctx.clip_pending.lock().unwrap().remove(&sender()) {
+                        let _ = tx.send(content());
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let _ = app.emit(
+        "message-received",
+        IncomingMessage { from: msg.from, ip, protocol: protocol.into(), text: msg.text, ts: now_secs(), ok: true },
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -465,11 +611,11 @@ fn discovery_recv_loop(
 // Messaging — UDP / TCP direct
 // ---------------------------------------------------------------------------
 
-fn tcp_recv_loop(app: AppHandle, listener: TcpListener, key: KeyHolder) {
+fn tcp_recv_loop(app: AppHandle, listener: TcpListener, ctx: NetCtx) {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
         let app = app.clone();
-        let key = key.clone();
+        let ctx = ctx.clone();
         std::thread::spawn(move || {
             let ip = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
             let mut buf = Vec::new();
@@ -477,13 +623,13 @@ fn tcp_recv_loop(app: AppHandle, listener: TcpListener, key: KeyHolder) {
                 return;
             }
             if let Ok(env) = serde_json::from_slice::<Envelope>(&buf) {
-                let _ = app.emit("message-received", envelope_to_message(&key, &env, ip, "TCP"));
+                handle_incoming(&app, &ctx, &env, ip, "TCP");
             }
         });
     }
 }
 
-fn udp_recv_loop(app: AppHandle, socket: UdpSocket, key: KeyHolder) {
+fn udp_recv_loop(app: AppHandle, socket: UdpSocket, ctx: NetCtx) {
     let mut buf = [0u8; 65535];
     loop {
         let (len, src) = match socket.recv_from(&mut buf) {
@@ -491,10 +637,7 @@ fn udp_recv_loop(app: AppHandle, socket: UdpSocket, key: KeyHolder) {
             Err(_) => continue,
         };
         if let Ok(env) = serde_json::from_slice::<Envelope>(&buf[..len]) {
-            let _ = app.emit(
-                "message-received",
-                envelope_to_message(&key, &env, src.ip().to_string(), "UDP"),
-            );
+            handle_incoming(&app, &ctx, &env, src.ip().to_string(), "UDP");
         }
     }
 }
@@ -503,7 +646,7 @@ fn udp_recv_loop(app: AppHandle, socket: UdpSocket, key: KeyHolder) {
 // Messaging — WebSocket (LAN, persistent, bidirectional)
 // ---------------------------------------------------------------------------
 
-fn ws_server_loop(app: AppHandle, listener: TcpListener, ctx: WsCtx) {
+fn ws_server_loop(app: AppHandle, listener: TcpListener, ctx: NetCtx) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
@@ -515,14 +658,7 @@ fn ws_server_loop(app: AppHandle, listener: TcpListener, ctx: WsCtx) {
     }
 }
 
-#[derive(Clone)]
-struct WsCtx {
-    identity: Arc<Mutex<Identity>>,
-    key: KeyHolder,
-    conns: WsConns,
-}
-
-fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocket<S>, ctx: WsCtx) {
+fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocket<S>, ctx: NetCtx) {
     // Announce ourselves.
     {
         let id = ctx.identity.lock().unwrap();
@@ -546,7 +682,7 @@ fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocke
                             // One socket per peer: if we already have a connection
                             // to this node (it dialed us, or we dialed it), drop
                             // this duplicate.
-                            let mut guard = ctx.conns.lock().unwrap();
+                            let mut guard = ctx.ws_conns.lock().unwrap();
                             if guard.contains_key(&node_id) {
                                 break;
                             }
@@ -557,10 +693,7 @@ fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocke
                         }
                         WsFrame::Msg { nonce, ciphertext } => {
                             let env = Envelope { nonce, ciphertext };
-                            let _ = app.emit(
-                                "message-received",
-                                envelope_to_message(&ctx.key, &env, String::new(), "WS"),
-                            );
+                            handle_incoming(&app, &ctx, &env, String::new(), "WS");
                         }
                     }
                 }
@@ -585,7 +718,7 @@ fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocke
     }
     // Only remove our own entry (a newer connection may have replaced it).
     if let Some(pid) = peer_id {
-        let mut g = ctx.conns.lock().unwrap();
+        let mut g = ctx.ws_conns.lock().unwrap();
         if g.get(&pid).map(|(id, _)| *id == my_conn_id).unwrap_or(false) {
             g.remove(&pid);
             drop(g);
@@ -596,7 +729,7 @@ fn handle_ws_conn<S: Read + Write>(app: AppHandle, mut ws: tungstenite::WebSocke
 
 /// Dial a peer's WebSocket listener (the "trigger"). The spawned handler
 /// registers the connection once hellos are exchanged.
-fn ws_connect(app: &AppHandle, ctx: WsCtx, ip: &str, ws_port: u16) -> Result<(), String> {
+fn ws_connect(app: &AppHandle, ctx: NetCtx, ip: &str, ws_port: u16) -> Result<(), String> {
     let addr: Ipv4Addr = ip.parse().map_err(|_| "bad peer ip")?;
     let stream = TcpStream::connect_timeout(
         &SocketAddr::new(addr.into(), ws_port),
@@ -816,32 +949,25 @@ fn connect_ws(node_id: String, state: State<AppState>, session: State<Session>, 
     if state.ws_conns.lock().unwrap().contains_key(&node_id) {
         return Ok(());
     }
-    let ctx = WsCtx {
-        identity: state.identity.clone(),
-        key: session.key.clone(),
-        conns: state.ws_conns.clone(),
-    };
-    ws_connect(&app, ctx, &peer.ip, peer.ws_port)
+    ws_connect(&app, net_ctx(&state, &session.key), &peer.ip, peer.ws_port)
 }
 
-#[tauri::command]
-fn send_message(
-    node_id: String,
-    protocol: String,
-    text: String,
-    state: State<AppState>,
-    session: State<Session>,
+/// Encrypt `text` and send it to `node_id` over the given transport. Shared by
+/// the chat `send_message` command and the clipboard helpers, so background
+/// threads can send without a Tauri `State`.
+fn send_payload(
+    peers: &PeerMap,
+    ws_conns: &WsConns,
+    key: &KeyHolder,
+    from: &str,
+    node_id: &str,
+    protocol: &str,
+    text: &str,
 ) -> Result<(), String> {
-    let key = session.key.lock().unwrap().ok_or("set your encryption key first")?;
-    let from = session
-        .username
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(|| state.identity.lock().unwrap().name.clone());
-
-    let plaintext = serde_json::to_vec(&Plaintext { from, text }).map_err(|e| e.to_string())?;
-    let env = encrypt(&key, &plaintext).ok_or("encryption failed")?;
+    let k = key.lock().unwrap().ok_or("set your encryption key first")?;
+    let plaintext = serde_json::to_vec(&Plaintext { from: from.to_string(), text: text.to_string() })
+        .map_err(|e| e.to_string())?;
+    let env = encrypt(&k, &plaintext).ok_or("encryption failed")?;
     let body = serde_json::to_vec(&env).map_err(|e| e.to_string())?;
 
     let proto = protocol.to_uppercase();
@@ -851,24 +977,17 @@ fn send_message(
             ciphertext: env.ciphertext.clone(),
         })
         .map_err(|e| e.to_string())?;
-        let sender = state
-            .ws_conns
+        let sender = ws_conns
             .lock()
             .unwrap()
-            .get(&node_id)
+            .get(node_id)
             .map(|(_, s)| s.clone())
             .ok_or("no WebSocket connection — trigger 'Connect (WS)' first")?;
         sender.send(frame).map_err(|_| "WebSocket connection closed".to_string())?;
         return Ok(());
     }
 
-    let peer = state
-        .peers
-        .lock()
-        .unwrap()
-        .get(&node_id)
-        .cloned()
-        .ok_or("peer not found")?;
+    let peer = peers.lock().unwrap().get(node_id).cloned().ok_or("peer not found")?;
     let ip: Ipv4Addr = peer.ip.parse().map_err(|_| "bad peer ip")?;
     match proto.as_str() {
         "TCP" => {
@@ -888,6 +1007,75 @@ fn send_message(
         }
         other => Err(format!("unknown protocol: {other}")),
     }
+}
+
+#[tauri::command]
+fn send_message(
+    node_id: String,
+    protocol: String,
+    text: String,
+    state: State<AppState>,
+    session: State<Session>,
+) -> Result<(), String> {
+    let from = session
+        .username
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| state.identity.lock().unwrap().name.clone());
+    send_payload(&state.peers, &state.ws_conns, &session.key, &from, &node_id, &protocol, &text)
+}
+
+/// ACTIVE mode on: from now on, local clipboard changes broadcast to all peers
+/// (and incoming clipboard pushes are applied) until disabled.
+#[tauri::command]
+fn enable_clipboard_sync(state: State<AppState>) {
+    // Seed the echo guard with the current clipboard so enabling doesn't
+    // immediately rebroadcast whatever happens to be on the clipboard.
+    if let Some(cur) = clipboard_get() {
+        *state.clip_last.lock().unwrap() = cur;
+    }
+    state.clip_active.store(true, Ordering::Relaxed);
+}
+
+/// ACTIVE mode off.
+#[tauri::command]
+fn disable_clipboard_sync(state: State<AppState>) {
+    state.clip_active.store(false, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn clipboard_sync_enabled(state: State<AppState>) -> bool {
+    state.clip_active.load(Ordering::Relaxed)
+}
+
+/// PASSIVE mode: pull a single peer's current clipboard once, write it to our
+/// local clipboard, and return it. Blocks briefly waiting for the reply.
+#[tauri::command]
+fn get_clipboard(
+    node_id: String,
+    state: State<AppState>,
+    session: State<Session>,
+) -> Result<String, String> {
+    let (tx, rx) = mpsc::channel::<String>();
+    state.clip_pending.lock().unwrap().insert(node_id.clone(), tx);
+
+    let me = state.identity.lock().unwrap().node_id.clone();
+    let from = state.identity.lock().unwrap().name.clone();
+    let req = serde_json::json!({ "type": "clipboard_request", "from": me }).to_string();
+    let proto = if state.ws_conns.lock().unwrap().contains_key(&node_id) { "WS" } else { "UDP" };
+
+    if let Err(e) = send_payload(&state.peers, &state.ws_conns, &session.key, &from, &node_id, proto, &req) {
+        state.clip_pending.lock().unwrap().remove(&node_id);
+        return Err(e);
+    }
+
+    let result = rx.recv_timeout(Duration::from_secs(6));
+    state.clip_pending.lock().unwrap().remove(&node_id);
+    let content = result.map_err(|_| "no clipboard response from peer (is it reachable and using the same key?)".to_string())?;
+    clipboard_set(&content);
+    *state.clip_last.lock().unwrap() = content.clone();
+    Ok(content)
 }
 
 #[tauri::command]
@@ -934,7 +1122,9 @@ fn remove_peer(node_id: String, state: State<AppState>, app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 fn start_networking(app: &AppHandle, key: KeyHolder) -> std::io::Result<AppState> {
-    let node_id = uuid::Uuid::new_v4().to_string();
+    // Stable, hardware-derived id so the same machine keeps one registry row
+    // across restarts (falls back to a random id only if the lookup fails).
+    let node_id = machine_uid::get().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
     let name = gethostname::gethostname().to_string_lossy().to_string();
 
     let tcp_listener = TcpListener::bind("0.0.0.0:0")?;
@@ -956,6 +1146,20 @@ fn start_networking(app: &AppHandle, key: KeyHolder) -> std::io::Result<AppState
 
     let peers: PeerMap = Arc::new(Mutex::new(HashMap::new()));
     let ws_conns: WsConns = Arc::new(Mutex::new(HashMap::new()));
+    let clip_active: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let clip_last: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let clip_pending: ClipPending = Arc::new(Mutex::new(HashMap::new()));
+
+    // Shared context for the receive loops + clipboard watcher.
+    let ctx = NetCtx {
+        identity: identity.clone(),
+        key: key.clone(),
+        peers: peers.clone(),
+        ws_conns: ws_conns.clone(),
+        clip_active: clip_active.clone(),
+        clip_last: clip_last.clone(),
+        clip_pending: clip_pending.clone(),
+    };
 
     let disco_recv = bind_multicast()?;
     let disco_send: Arc<UdpSocket> = Arc::new(disco_recv.try_clone()?);
@@ -971,23 +1175,50 @@ fn start_networking(app: &AppHandle, key: KeyHolder) -> std::io::Result<AppState
     // Direct messaging receivers.
     {
         let app = app.clone();
-        let key = key.clone();
-        std::thread::spawn(move || tcp_recv_loop(app, tcp_listener, key));
+        let ctx = ctx.clone();
+        std::thread::spawn(move || tcp_recv_loop(app, tcp_listener, ctx));
     }
     {
         let app = app.clone();
-        let key = key.clone();
-        std::thread::spawn(move || udp_recv_loop(app, udp_msg_socket, key));
+        let ctx = ctx.clone();
+        std::thread::spawn(move || udp_recv_loop(app, udp_msg_socket, ctx));
     }
     // WebSocket listener.
     {
         let app = app.clone();
-        let ctx = WsCtx {
-            identity: identity.clone(),
-            key: key.clone(),
-            conns: ws_conns.clone(),
-        };
+        let ctx = ctx.clone();
         std::thread::spawn(move || ws_server_loop(app, ws_listener, ctx));
+    }
+    // Clipboard auto-sync ("active" mode): while enabled, poll the local
+    // clipboard and broadcast changes to all peers. Polling (vs. an OS change
+    // hook) keeps this cross-platform; the echo guard (`clip_last`) avoids
+    // re-broadcasting clipboards we just applied from a peer.
+    {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(1000));
+            if !ctx.clip_active.load(Ordering::Relaxed) {
+                continue;
+            }
+            let Some(cur) = clipboard_get() else { continue };
+            if cur.is_empty() {
+                continue;
+            }
+            let changed = {
+                let mut last = ctx.clip_last.lock().unwrap();
+                if *last != cur {
+                    *last = cur.clone();
+                    true
+                } else {
+                    false
+                }
+            };
+            if changed {
+                let me = ctx.identity.lock().unwrap().node_id.clone();
+                let msg = serde_json::json!({ "type": "clipboard", "content": cur, "from": me }).to_string();
+                clip_broadcast(&ctx, &msg);
+            }
+        });
     }
     // Network-change watcher: update advertised IP (re-register is user/Refresh driven).
     {
@@ -1008,6 +1239,9 @@ fn start_networking(app: &AppHandle, key: KeyHolder) -> std::io::Result<AppState
         peers,
         disco_send,
         ws_conns,
+        clip_active,
+        clip_last,
+        clip_pending,
     })
 }
 
@@ -1051,6 +1285,10 @@ pub fn run() {
             scan_lan,
             connect_ws,
             send_message,
+            enable_clipboard_sync,
+            disable_clipboard_sync,
+            clipboard_sync_enabled,
+            get_clipboard,
             add_manual_peer,
             remove_peer
         ])

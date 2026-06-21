@@ -45,6 +45,39 @@ async function enterApp() {
   el("set-who").textContent = `${info.username ?? ""} @ ${info.server_url ?? ""}`;
   try { await invoke("refresh_from_server"); } catch (e) { console.warn(e); }
   await loadPeers();
+  await refreshClipToggle();
+}
+
+// ---------- clipboard ----------
+async function refreshClipToggle() {
+  const on = await invoke("clipboard_sync_enabled");
+  const btn = el("clip-toggle");
+  btn.textContent = on ? "Disable" : "Enable";
+  btn.classList.toggle("connected", on);
+}
+
+async function onClipToggle() {
+  const on = await invoke("clipboard_sync_enabled");
+  await invoke(on ? "disable_clipboard_sync" : "enable_clipboard_sync");
+  await refreshClipToggle();
+  setStatus("clip-status", on ? "Auto-sync disabled." : "Auto-sync enabled.", true);
+}
+
+async function onClipGet() {
+  const node_id = el("clip-peer-select").value;
+  if (!node_id) return setStatus("clip-status", "Pick a peer.", false);
+  const peer = peers.find((p) => p.node_id === node_id);
+  el("clip-get-btn").disabled = true;
+  setStatus("clip-status", "Requesting…", true);
+  try {
+    const text = await invoke("get_clipboard", { nodeId: node_id });
+    setStatus("clip-status", "Copied peer's clipboard locally.", true);
+    addLog({ dir: "in", peer: peer ? peer.name : "peer", ip: peer ? peer.ip : "", protocol: "CLIP", text: `📋 ${text}` });
+  } catch (err) {
+    setStatus("clip-status", String(err), false);
+  } finally {
+    el("clip-get-btn").disabled = false;
+  }
 }
 
 // ---------- peers ----------
@@ -73,10 +106,14 @@ function render() {
       )
       .join("");
   }
-  const sel = el("peer-select");
-  const prev = sel.value;
-  sel.innerHTML = peers.map((p) => `<option value="${esc(p.node_id)}">${esc(p.name)} (${esc(p.ip)})</option>`).join("");
-  if (peers.some((p) => p.node_id === prev)) sel.value = prev;
+  const opts = peers.map((p) => `<option value="${esc(p.node_id)}">${esc(p.name)} (${esc(p.ip)})</option>`).join("");
+  for (const id of ["peer-select", "clip-peer-select"]) {
+    const sel = el(id);
+    if (!sel) continue;
+    const prev = sel.value;
+    sel.innerHTML = opts;
+    if (peers.some((p) => p.node_id === prev)) sel.value = prev;
+  }
 }
 
 function addLog({ dir, peer, ip, protocol, text, ok = true }) {
@@ -136,6 +173,8 @@ async function init() {
   el("a-genkey").addEventListener("click", async () => { el("a-key").value = await invoke("generate_key"); });
 
   el("send-form").addEventListener("submit", onSend);
+  el("clip-toggle").addEventListener("click", onClipToggle);
+  el("clip-get-btn").addEventListener("click", onClipGet);
   el("clear-log").addEventListener("click", () => { el("log").innerHTML = '<li class="empty">No messages yet.</li>'; });
   el("btn-refresh").addEventListener("click", async () => { try { await invoke("refresh_from_server"); } catch (e) { alert(e); } });
   el("btn-scan").addEventListener("click", () => invoke("scan_lan"));
@@ -164,6 +203,10 @@ async function init() {
   await listen("message-received", (ev) => {
     const m = ev.payload;
     addLog({ dir: "in", peer: m.from, ip: m.ip, protocol: m.protocol, text: m.text, ok: m.ok });
+  });
+  await listen("clipboard-event", (ev) => {
+    const m = ev.payload;
+    addLog({ dir: "in", peer: m.from, ip: m.ip, protocol: m.protocol, text: "📋 Clipboard synced from peer" });
   });
 }
 
