@@ -2180,6 +2180,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdcore"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "socket2 0.5.10",
+ "tungstenite",
+ "ureq",
+ "uuid",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2257,13 +2273,10 @@ name = "my-domain"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "argon2",
- "base64 0.22.1",
- "chacha20poly1305",
  "gethostname 0.5.0",
  "if-addrs",
  "machine-uid",
- "rand_core",
+ "mdcore",
  "serde",
  "serde_json",
  "socket2 0.5.10",
@@ -2271,7 +2284,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tungstenite",
- "ureq",
  "uuid",
 ]
 
@@ -4479,7 +4491,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
 dependencies = [
  "base64 0.22.1",
- "flate2",
  "log",
  "once_cell",
  "rustls",
