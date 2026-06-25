@@ -4,133 +4,215 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LAN Messenger</title>
+    <title>my-domain</title>
     <script type="module" src="/main.js" defer></script>
   </head>
 
   <body>
-    <!-- Auth gate: shown until logged in + encryption key set -->
-    <div id="auth" class="auth-overlay">
-      <form id="auth-form" class="auth-card">
-        <h1>my-domain</h1>
-        <p class="muted small">Log in, then set your encryption key to unlock messaging.</p>
+    <!-- ============ Login ============ -->
+    <div id="login" class="login-overlay">
+      <form id="login-form" class="login-card">
+        <div class="brand"><span class="logo">◆</span><h1>my-domain</h1></div>
+        <p class="muted small">Connect and control all your devices.</p>
         <label>Server URL<input id="a-server" placeholder="http://192.168.0.10:6969" required /></label>
         <label>Username<input id="a-user" autocomplete="username" required /></label>
         <label>Password<input id="a-pass" type="password" autocomplete="current-password" required /></label>
         <label>Encryption key
           <div class="keyrow">
             <input id="a-key" placeholder="shared secret for E2EE" required />
-            <button type="button" id="a-genkey" class="ghost">Generate</button>
+            <button type="button" id="a-genkey" class="ghost sm">Generate</button>
           </div>
         </label>
-        <div class="row">
-          <button type="submit" id="a-login">Log in</button>
+        <div class="row gap">
+          <button type="submit" id="a-login" class="primary grow">Log in</button>
           <button type="button" id="a-register" class="secondary">Register</button>
         </div>
         <p id="a-status" class="status"></p>
-        <p class="muted small">Use the <strong>same encryption key</strong> on all your devices, or they can't read each other's messages.</p>
+        <p class="muted xsmall">Use the <strong>same encryption key</strong> on every device, or they can't read each other's data.</p>
       </form>
     </div>
 
-    <!-- Main app -->
-    <div id="app" class="hidden">
-      <header class="topbar">
-        <div>
-          <h1>LAN Messenger</h1>
-          <p class="subtitle" id="me-line">…</p>
+    <!-- ============ App ============ -->
+    <div id="app" class="app hidden">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="side-head">
+          <div class="brand sm"><span class="logo">◆</span><span>my-domain</span></div>
+          <div class="me-chip" id="me-chip" title="This device">
+            <span class="dot online"></span>
+            <span class="me-name" id="me-name">…</span>
+          </div>
         </div>
-        <div class="topbar-actions">
-          <button id="btn-refresh" class="ghost" title="Re-register and fetch peers">Refresh</button>
-          <button id="btn-scan" class="ghost" title="Discover peers over the LAN">Scan LAN</button>
-          <button id="btn-settings" class="ghost">⚙ Settings</button>
-        </div>
-      </header>
 
-      <main class="layout">
-        <section class="panel">
-          <div class="panel-head"><h2>Peers <span class="count" id="peer-count">0</span></h2></div>
-          <ul id="peer-list" class="peer-list">
-            <li class="empty">No peers yet — Refresh (registry) or Scan LAN.</li>
+        <div class="side-section">
+          <div class="side-section-head">
+            <span>Devices</span>
+            <button id="btn-add" class="icon" title="Add device manually">＋</button>
+          </div>
+          <ul id="device-list" class="device-list">
+            <li class="empty">No devices yet.</li>
           </ul>
-          <details class="manual">
-            <summary>Add a peer manually</summary>
-            <form id="manual-form" class="manual-form">
-              <input id="m-name" placeholder="Name (optional)" />
-              <input id="m-ip" placeholder="IP e.g. 192.168.0.105" required />
-              <div class="ports">
-                <input id="m-tcp" type="number" min="0" max="65535" placeholder="TCP" />
-                <input id="m-udp" type="number" min="0" max="65535" placeholder="UDP" />
-                <input id="m-ws" type="number" min="0" max="65535" placeholder="WS" />
-              </div>
-              <button type="submit">Add peer</button>
-              <p id="manual-status" class="status"></p>
-            </form>
-          </details>
-        </section>
+        </div>
 
-        <section class="panel">
-          <div class="panel-head"><h2>Compose</h2></div>
-          <form id="send-form" class="compose">
-            <label>To<select id="peer-select" required></select></label>
-            <label>Transport
-              <div class="seg">
-                <input type="radio" name="proto" id="proto-udp" value="UDP" checked /><label for="proto-udp">UDP</label>
-                <input type="radio" name="proto" id="proto-tcp" value="TCP" /><label for="proto-tcp">TCP</label>
-                <input type="radio" name="proto" id="proto-ws" value="WS" /><label for="proto-ws">WS</label>
-              </div>
-            </label>
-            <textarea id="msg-input" rows="3" placeholder="Type a message…" required></textarea>
-            <button type="submit" id="send-btn">Send</button>
-            <p id="send-status" class="status"></p>
-          </form>
-        </section>
+        <div class="side-tools">
+          <button id="btn-scan" class="ghost block">⟳ Scan LAN</button>
+          <button id="btn-refresh" class="ghost block">⤓ Refresh from server</button>
+        </div>
 
-        <section class="panel">
-          <div class="panel-head"><h2>Clipboard</h2></div>
-          <div class="compose">
-            <label class="row" style="align-items:center;gap:8px;justify-content:space-between">
-              <span>Auto-sync (active)</span>
-              <button type="button" id="clip-toggle" class="ghost">Enable</button>
-            </label>
-            <p class="muted small">When on, your clipboard changes broadcast to all peers (and incoming ones are applied) until you disable it.</p>
-            <label>Get clipboard from<select id="clip-peer-select"></select></label>
-            <button type="button" id="clip-get-btn">Get clipboard (once)</button>
-            <p id="clip-status" class="status"></p>
+        <nav class="side-nav">
+          <button id="nav-settings" class="navbtn">⚙ Settings</button>
+        </nav>
+      </aside>
+
+      <!-- Content -->
+      <main class="content">
+        <!-- Empty state -->
+        <section id="view-empty" class="view view-center">
+          <div class="empty-hero">
+            <div class="empty-logo">◆</div>
+            <h2>Select a device</h2>
+            <p class="muted">Pick a device on the left to share clipboard, send messages and notifications. Use <strong>Scan LAN</strong> or <strong>Refresh</strong> to find them.</p>
           </div>
         </section>
 
-        <section class="panel wide">
-          <div class="panel-head">
-            <h2>Messages</h2>
-            <button type="button" id="clear-log" class="ghost">Clear</button>
+        <!-- Device view -->
+        <section id="view-device" class="view hidden">
+          <header class="dv-head">
+            <div class="dv-id">
+              <span class="dv-avatar" id="dv-avatar">?</span>
+              <div>
+                <h2 id="dv-name">Device</h2>
+                <p class="muted small" id="dv-sub"></p>
+              </div>
+            </div>
+            <div class="dv-head-actions">
+              <span id="dv-status" class="pill">offline</span>
+              <button id="btn-connect" class="primary sm">Connect</button>
+              <button id="btn-remove" class="ghost sm hidden">Remove</button>
+            </div>
+          </header>
+
+          <div class="cards">
+            <!-- Messaging -->
+            <article class="card">
+              <div class="card-head"><span class="card-ic">✉</span><h3>Send message</h3></div>
+              <form id="send-form" class="card-body">
+                <div class="seg" id="proto-seg">
+                  <input type="radio" name="proto" id="proto-udp" value="UDP" checked /><label for="proto-udp">UDP</label>
+                  <input type="radio" name="proto" id="proto-tcp" value="TCP" /><label for="proto-tcp">TCP</label>
+                  <input type="radio" name="proto" id="proto-ws" value="WS" /><label for="proto-ws">WS</label>
+                </div>
+                <textarea id="msg-input" rows="2" placeholder="Type a message…" required></textarea>
+                <div class="row end"><button type="submit" id="send-btn" class="primary sm">Send</button></div>
+                <p id="send-status" class="status"></p>
+              </form>
+            </article>
+
+            <!-- Clipboard -->
+            <article class="card">
+              <div class="card-head"><span class="card-ic">📋</span><h3>Clipboard</h3></div>
+              <div class="card-body">
+                <div class="toggle-row">
+                  <div>
+                    <strong>Auto-sync</strong>
+                    <p class="muted xsmall">Broadcast clipboard changes to all devices.</p>
+                  </div>
+                  <button type="button" id="clip-toggle" class="switch" role="switch" aria-checked="false"><span></span></button>
+                </div>
+                <button type="button" id="clip-get-btn" class="ghost block">⤓ Get this device's clipboard</button>
+                <p id="clip-status" class="status"></p>
+              </div>
+            </article>
+
+            <!-- Notification -->
+            <article class="card">
+              <div class="card-head"><span class="card-ic">🔔</span><h3>Send notification</h3></div>
+              <form id="notif-form" class="card-body">
+                <input id="n-title" placeholder="Title" required />
+                <input id="n-body" placeholder="Message" />
+                <div class="row end"><button type="submit" class="primary sm">Send</button></div>
+                <p class="muted xsmall">Broadcasts to all your devices.</p>
+                <p id="notif-status" class="status"></p>
+              </form>
+            </article>
           </div>
-          <ul id="log" class="log"><li class="empty">No messages yet.</li></ul>
+
+          <!-- Activity thread for this device -->
+          <article class="card thread-card">
+            <div class="card-head between">
+              <div><span class="card-ic">≡</span><h3>Activity</h3></div>
+              <button type="button" id="clear-log" class="ghost xsm">Clear</button>
+            </div>
+            <ul id="thread" class="thread"><li class="empty">No activity yet.</li></ul>
+          </article>
+        </section>
+
+        <!-- Settings view -->
+        <section id="view-settings" class="view hidden">
+          <header class="dv-head"><div class="dv-id"><span class="dv-avatar">⚙</span><div><h2>Settings</h2><p class="muted small" id="set-who"></p></div></div></header>
+
+          <div class="cards">
+            <article class="card">
+              <div class="card-head"><span class="card-ic">🔑</span><h3>Encryption key</h3></div>
+              <form id="settings-form" class="card-body">
+                <label>New key
+                  <div class="keyrow">
+                    <input id="s-key" placeholder="new shared secret" required />
+                    <button type="button" id="s-genkey" class="ghost sm">Generate</button>
+                  </div>
+                </label>
+                <label>Confirm password<input id="s-pass" type="password" autocomplete="current-password" required /></label>
+                <div class="row end"><button type="submit" class="primary sm">Update key</button></div>
+                <p id="s-status" class="status"></p>
+              </form>
+            </article>
+
+            <article class="card">
+              <div class="card-head"><span class="card-ic">🛡</span><h3>Connectivity</h3></div>
+              <div class="card-body">
+                <button type="button" id="btn-firewall" class="ghost block">Run firewall check</button>
+                <p id="fw-status" class="status"></p>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-head"><span class="card-ic">🖥</span><h3>This device</h3></div>
+              <div class="card-body">
+                <dl class="kv" id="me-details"></dl>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-head"><span class="card-ic">⎋</span><h3>Account</h3></div>
+              <div class="card-body">
+                <p class="muted small" id="acct-line"></p>
+                <button type="button" id="s-logout" class="danger block">Log out</button>
+              </div>
+            </article>
+          </div>
         </section>
       </main>
     </div>
 
-    <!-- Settings modal -->
-    <div id="settings" class="modal hidden">
-      <div class="modal-card">
-        <h2>Settings</h2>
-        <p class="muted small" id="set-who"></p>
-        <form id="settings-form">
-          <label>New encryption key
-            <div class="keyrow">
-              <input id="s-key" placeholder="new shared secret" required />
-              <button type="button" id="s-genkey" class="ghost">Generate</button>
-            </div>
-          </label>
-          <label>Confirm password<input id="s-pass" type="password" autocomplete="current-password" required /></label>
-          <div class="row">
-            <button type="submit">Update key</button>
-            <button type="button" id="s-close" class="secondary">Close</button>
-          </div>
-          <p id="s-status" class="status"></p>
-        </form>
-        <hr />
-        <button type="button" id="s-logout" class="danger">Log out</button>
-      </div>
+    <!-- ============ Add-device modal ============ -->
+    <div id="modal-add" class="modal hidden">
+      <form id="manual-form" class="modal-card">
+        <h2>Add device manually</h2>
+        <label>Name (optional)<input id="m-name" placeholder="My phone" /></label>
+        <label>IP address<input id="m-ip" placeholder="192.168.0.105" required /></label>
+        <div class="ports">
+          <label class="grow">TCP<input id="m-tcp" type="number" min="0" max="65535" /></label>
+          <label class="grow">UDP<input id="m-udp" type="number" min="0" max="65535" /></label>
+          <label class="grow">WS<input id="m-ws" type="number" min="0" max="65535" /></label>
+        </div>
+        <div class="row end gap">
+          <button type="button" id="m-cancel" class="secondary">Cancel</button>
+          <button type="submit" class="primary">Add</button>
+        </div>
+        <p id="manual-status" class="status"></p>
+      </form>
     </div>
+
+    <div id="toast" class="toast hidden"></div>
   </body>
 </html>
