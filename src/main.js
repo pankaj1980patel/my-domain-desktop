@@ -12,6 +12,8 @@ let selected = null; // selected node_id
 let view = "empty"; // empty | device | settings
 let identity = null;
 const activity = []; // { node?, dir, name, ip, protocol, text, ok, ts }
+const appsByNode = {}; // node_id -> { apps: [{pkg,label}], subscribed: Set<pkg> }
+let appsSearch = "";
 
 // ---------- helpers ----------
 function setStatus(id, msg, ok) {
@@ -132,6 +134,50 @@ function renderDevice() {
   cbtn.disabled = isConn || !p.ws_port;
   el("btn-remove").classList.toggle("hidden", p.source !== "manual");
   renderThread();
+  renderApps();
+}
+
+// ---------- app-notification pub/sub ----------
+function renderApps() {
+  const p = selectedPeer();
+  const list = el("apps-list");
+  const data = p ? appsByNode[p.node_id] : null;
+  if (!data) { list.innerHTML = '<li class="empty">Tap Refresh to load this device\'s apps.</li>'; return; }
+  const q = appsSearch.toLowerCase();
+  const apps = data.apps.filter((a) => !q || (a.label || a.pkg).toLowerCase().includes(q));
+  if (!apps.length) { list.innerHTML = '<li class="empty">No apps match.</li>'; return; }
+  list.innerHTML = apps
+    .map((a) => {
+      const on = data.subscribed.has(a.pkg);
+      return `<li class="app-row">
+        <span class="app-label"><strong>${esc(a.label || a.pkg)}</strong><br/><span class="app-pkg">${esc(a.pkg)}</span></span>
+        <button type="button" class="switch app-toggle" role="switch" aria-checked="${on}" data-pkg="${esc(a.pkg)}"><span></span></button>
+      </li>`;
+    })
+    .join("");
+}
+
+async function onAppToggle(pkg) {
+  const p = selectedPeer();
+  const data = p && appsByNode[p.node_id];
+  if (!data) return;
+  if (data.subscribed.has(pkg)) data.subscribed.delete(pkg);
+  else data.subscribed.add(pkg);
+  renderApps();
+  try {
+    await invoke("subscribe_apps", { nodeId: p.node_id, appsJson: JSON.stringify([...data.subscribed]) });
+    setStatus("apps-status", "Subscription updated.", true);
+  } catch (err) {
+    setStatus("apps-status", String(err), false);
+  }
+}
+
+async function onAppsRefresh() {
+  const p = selectedPeer();
+  if (!p) return;
+  setStatus("apps-status", "Requesting app list…", true);
+  try { await invoke("request_apps", { nodeId: p.node_id }); }
+  catch (err) { setStatus("apps-status", String(err), false); }
 }
 
 function relevant(entry, p) {
@@ -313,6 +359,9 @@ async function init() {
   el("clip-toggle").addEventListener("click", onClipToggle);
   el("clip-get-btn").addEventListener("click", onClipGet);
   el("notif-form").addEventListener("submit", onNotif);
+  el("apps-refresh").addEventListener("click", onAppsRefresh);
+  el("apps-search").addEventListener("input", (e) => { appsSearch = e.target.value; renderApps(); });
+  el("apps-list").addEventListener("click", (e) => { const t = e.target.closest(".app-toggle"); if (t) onAppToggle(t.dataset.pkg); });
   el("clear-log").addEventListener("click", () => { const p = selectedPeer(); for (let i = activity.length - 1; i >= 0; i--) if (relevant(activity[i], p)) activity.splice(i, 1); renderThread(); });
   el("btn-connect").addEventListener("click", async () => {
     const p = selectedPeer(); if (!p) return;
@@ -361,6 +410,12 @@ async function init() {
   await listen("call-history-event", (ev) => {
     const m = ev.payload;
     logActivity({ dir: "in", name: m.from, protocol: "CALL", text: "📞 Call history synced" });
+  });
+  await listen("apps-list-event", (ev) => {
+    const m = ev.payload; // { from, apps:[{pkg,label}], subscribed:[pkg] }
+    appsByNode[m.from] = { apps: m.apps || [], subscribed: new Set(m.subscribed || []) };
+    const p = selectedPeer();
+    if (p && p.node_id === m.from) { setStatus("apps-status", `${(m.apps || []).length} apps`, true); renderApps(); }
   });
 }
 

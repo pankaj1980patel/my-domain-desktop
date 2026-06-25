@@ -168,6 +168,12 @@ impl EventSink for TauriSink {
                     serde_json::json!({ "from": from, "entries": entries }),
                 );
             }
+            CoreEvent::AppsList { from, apps, subscribed } => {
+                let _ = self.app.emit(
+                    "apps-list-event",
+                    serde_json::json!({ "from": from, "apps": apps, "subscribed": subscribed }),
+                );
+            }
         }
     }
 }
@@ -326,6 +332,18 @@ fn on_signal(from: String, payload: String, engine: State<Eng>) {
     engine.on_signal(&from, &payload)
 }
 
+// --- app-notification pub/sub (consumer side) ---
+
+#[tauri::command]
+fn request_apps(node_id: String, engine: State<Eng>) -> Result<(), String> {
+    engine.request_apps(&node_id)
+}
+
+#[tauri::command]
+fn subscribe_apps(node_id: String, apps_json: String, engine: State<Eng>) -> Result<(), String> {
+    engine.subscribe_apps(&node_id, &apps_json)
+}
+
 // ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
@@ -380,7 +398,9 @@ pub fn run() {
             connect,
             firewall_check,
             update_ws_open,
-            on_signal
+            on_signal,
+            request_apps,
+            subscribe_apps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

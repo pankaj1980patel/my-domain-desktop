@@ -137,6 +137,20 @@
             </article>
           </div>
 
+          <!-- App notification sharing (pub/sub) -->
+          <article class="card apps-card">
+            <div class="card-head between">
+              <div><span class="card-ic">📥</span><h3>App notifications</h3></div>
+              <button type="button" id="apps-refresh" class="ghost xsm">Refresh</button>
+            </div>
+            <div class="card-body">
+              <p class="muted xsmall">Choose which of this device's apps mirror their notifications to you.</p>
+              <input id="apps-search" placeholder="Search apps…" />
+              <ul id="apps-list" class="apps-list"><li class="empty">Tap Refresh to load this device's apps.</li></ul>
+              <p id="apps-status" class="status"></p>
+            </div>
+          </article>
+
           <!-- Activity thread for this device -->
           <article class="card thread-card">
             <div class="card-head between">

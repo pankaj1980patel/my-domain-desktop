@@ -171,6 +171,15 @@ label input, label textarea, label select { margin-top: 5px; color: var(--text);
 .badge.clip { color: var(--amber); } .badge.notif { color: var(--amber); }
 .badge.src-registry { color: #7fb0ff; } .badge.src-lan { color: var(--green); } .badge.src-manual { color: var(--amber); }
 
+/* app-notification list */
+.apps-card { margin-top: 16px; }
+.apps-list { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.apps-list .empty { color: var(--muted); text-align: center; padding: 16px; font-size: 12.5px; }
+.app-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); }
+.app-row:hover { background: var(--bg); }
+.app-row .app-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-row .app-pkg { color: var(--muted); font-size: 11px; }
+
 /* ---------- modal ---------- */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: center; z-index: 20; }
 .modal-card { width: 380px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 12px; }
