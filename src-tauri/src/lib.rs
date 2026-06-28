@@ -153,6 +153,21 @@ impl EventSink for TauriSink {
             CoreEvent::WsDisconnected { node_id } => {
                 let _ = self.app.emit("ws-disconnected", node_id);
             }
+            CoreEvent::PeerConnected { node_id, transport } => {
+                let _ = self.app.emit(
+                    "peer-connected",
+                    serde_json::json!({ "node_id": node_id, "transport": transport }),
+                );
+            }
+            CoreEvent::PeerDisconnected { node_id } => {
+                let _ = self.app.emit("peer-disconnected", node_id);
+            }
+            CoreEvent::ConnectProgress { node_id, stage, detail } => {
+                let _ = self.app.emit(
+                    "connect-progress",
+                    serde_json::json!({ "node_id": node_id, "stage": stage, "detail": detail }),
+                );
+            }
             CoreEvent::Clipboard { from, ip, protocol, action } => {
                 let _ = self.app.emit(
                     "clipboard-event",
@@ -337,6 +352,13 @@ fn fcm_selftest(engine: State<Eng>) -> Result<String, String> {
     engine.fcm_selftest()
 }
 
+/// Run + persist this device's inbound firewall status (background) so siblings
+/// see our reachability via `GET /devices`. Called on startup after login.
+#[tauri::command]
+fn report_firewall(engine: State<Eng>) {
+    engine.report_firewall()
+}
+
 #[tauri::command]
 fn update_ws_open(open: bool, engine: State<Eng>) -> Result<(), String> {
     engine.update_ws_open(open)
@@ -419,6 +441,7 @@ pub fn run() {
             connect,
             firewall_check,
             fcm_selftest,
+            report_firewall,
             update_ws_open,
             on_signal,
             request_apps,

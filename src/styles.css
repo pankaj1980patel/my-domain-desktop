@@ -105,8 +105,9 @@ label input, label textarea, label select { margin-top: 5px; color: var(--text);
 .device .info .sub { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-.dot.online { background: var(--green); box-shadow: 0 0 0 3px rgba(62,207,142,.15); }
-.dot.connected { background: var(--accent); box-shadow: 0 0 0 3px rgba(91,140,255,.15); }
+/* Neutral = known peer, no live P2P connection. Green = a real connection is live. */
+.dot.neutral { background: #3a4256; }
+.dot.connected { background: var(--green); box-shadow: 0 0 0 3px rgba(62,207,142,.15); }
 
 .side-tools { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line-soft); }
 .side-nav { padding: 8px 10px 12px; }
@@ -127,8 +128,8 @@ label input, label textarea, label select { margin-top: 5px; color: var(--text);
 .dv-head-actions { display: flex; align-items: center; gap: 10px; }
 
 .pill { font-size: 11.5px; padding: 4px 10px; border-radius: 20px; background: var(--bg-elev); color: var(--muted); }
-.pill.online { color: var(--green); background: rgba(62,207,142,.12); }
-.pill.connected { color: var(--accent); background: rgba(91,140,255,.14); }
+.pill.connected { color: var(--green); background: rgba(62,207,142,.12); text-transform: capitalize; }
+.badge.fw-blocked { color: var(--amber); background: rgba(246,196,83,.12); }
 
 /* cards */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }

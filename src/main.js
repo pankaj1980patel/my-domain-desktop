@@ -49,7 +49,7 @@ const listen = (name, cb) =>
 
 // ---------- state ----------
 let peers = [];
-const connected = new Set(); // node_ids with a live WebSocket
+const connected = new Map(); // node_id -> transport ("ws"|"udp"|"punch"|"webrtc") for live P2P links
 let selected = null; // selected node_id
 let view = "empty"; // empty | device | settings
 let identity = null;
@@ -106,6 +106,8 @@ async function enterApp() {
   try { await invoke("refresh_from_server"); } catch (e) { console.warn(e); }
   await loadPeers();
   await refreshClipToggle();
+  // Self-report our inbound firewall status so siblings see our reachability.
+  try { await invoke("report_firewall"); } catch (e) { console.warn(e); }
   // Verify FCM end-to-end once the token has had a moment to register server-side.
   setTimeout(fcmSelfTest, 3000);
 }
@@ -150,13 +152,14 @@ function renderDevices() {
   } else {
     list.innerHTML = peers
       .map((p) => {
-        const isConn = connected.has(p.node_id);
-        const dotCls = isConn ? "connected" : "online";
+        const tx = connected.get(p.node_id);
+        const dotCls = tx ? "connected" : "neutral";
+        const fw = p.inbound_blocked ? ' · <span class="badge fw-blocked" title="cannot receive inbound (needs relay)">🔒</span>' : "";
         return `<li class="device ${p.node_id === selected ? "active" : ""}" data-id="${esc(p.node_id)}">
           <span class="avatar">${esc(avatarText(p.name))}</span>
           <span class="info">
-            <span class="nm"><span class="dot ${dotCls}"></span><strong>${esc(p.name)}</strong></span>
-            <span class="sub">${esc(p.ip)} · <span class="badge src-${esc(p.source)}">${esc(p.source)}</span></span>
+            <span class="nm"><span class="dot ${dotCls}" title="${tx ? "connected via " + tx : "not connected"}"></span><strong>${esc(p.name)}</strong></span>
+            <span class="sub">${esc(p.ip)} · <span class="badge src-${esc(p.source)}">${esc(p.source)}</span>${fw}</span>
           </span>
         </li>`;
       })
@@ -184,16 +187,17 @@ function showView() {
 function renderDevice() {
   const p = selectedPeer();
   if (!p) { view = "empty"; showView(); return; }
-  const isConn = connected.has(p.node_id);
+  const tx = connected.get(p.node_id);
+  const isConn = !!tx;
   el("dv-avatar").textContent = avatarText(p.name);
   el("dv-name").textContent = p.name;
   el("dv-sub").textContent = `${p.ip} · tcp ${p.tcp_port} · udp ${p.udp_port} · ws ${p.ws_port}`;
   const status = el("dv-status");
-  status.textContent = isConn ? "connected" : "online";
-  status.className = "pill " + (isConn ? "connected" : "online");
+  status.textContent = isConn ? `connected · ${tx}` : "not connected";
+  status.className = "pill " + (isConn ? "connected" : "");
   const cbtn = el("btn-connect");
   cbtn.textContent = isConn ? "Connected ✓" : "Connect";
-  cbtn.disabled = isConn || !p.ws_port;
+  cbtn.disabled = isConn;
   el("btn-remove").classList.toggle("hidden", p.source !== "manual");
   renderThread();
   renderApps();
@@ -477,7 +481,10 @@ async function init() {
   el("btn-connect").addEventListener("click", async () => {
     const p = selectedPeer(); if (!p) return;
     el("btn-connect").textContent = "Connecting…";
-    try { await invoke("connect_ws", { nodeId: p.node_id }); } catch (err) { toast(String(err)); renderDevice(); }
+    el("btn-connect").disabled = true;
+    // The ladder (connect) runs in the background and reports via connect-progress
+    // + peer-connected; it tries same-LAN UDP, direct/FCM WS, punch, then WebRTC.
+    try { await invoke("connect", { nodeId: p.node_id }); } catch (err) { toast(String(err)); renderDevice(); }
   });
   el("btn-remove").addEventListener("click", async () => {
     const p = selectedPeer(); if (!p) return;
@@ -514,17 +521,28 @@ async function init() {
 
   // events
   await listen("peers-updated", (ev) => { peers = ev.payload; renderDevices(); });
-  await listen("ws-connected", (ev) => {
-    connected.add(ev.payload);
-    const p = peers.find((x) => x.node_id === ev.payload);
-    dlog("ws", "ws", `connected ${p ? `${wsAddr(p)} (${p.name})` : ev.payload}`);
+  // Unified live-connection events (any transport) drive the green dot.
+  await listen("peer-connected", (ev) => {
+    const m = ev.payload || {};
+    connected.set(m.node_id, m.transport);
+    const p = peers.find((x) => x.node_id === m.node_id);
+    dlog("ws", "p2p", `connected via ${m.transport} ${p ? `${p.ip} (${p.name})` : m.node_id}`);
     renderDevices(); if (view === "device") renderDevice();
   });
-  await listen("ws-disconnected", (ev) => {
+  await listen("peer-disconnected", (ev) => {
     connected.delete(ev.payload);
     const p = peers.find((x) => x.node_id === ev.payload);
-    dlog("ws", "ws", `disconnected ${p ? `${wsAddr(p)} (${p.name})` : ev.payload}`);
+    dlog("ws", "p2p", `disconnected ${p ? `${p.ip} (${p.name})` : ev.payload}`);
     renderDevices(); if (view === "device") renderDevice();
+  });
+  await listen("connect-progress", (ev) => {
+    const m = ev.payload || {};
+    dlog("ws", "ladder", `${m.stage}${m.detail ? " · " + m.detail : ""}`);
+    const p = selectedPeer();
+    if (p && p.node_id === m.node_id && view === "device" && !connected.has(m.node_id)) {
+      const label = { udp_ping: "Trying LAN…", direct_ws: "Trying direct…", via_signal: "Via signal…", punching: "Punching…", webrtc: "WebRTC…", failed: "Connect", connected: "Connected ✓" }[m.stage];
+      if (label) { el("btn-connect").textContent = label; el("btn-connect").disabled = m.stage !== "failed"; }
+    }
   });
   // FCM push signals (raw listen: emit our own clean line instead of the generic event dump).
   _event.listen("fcm-event", (ev) => {
