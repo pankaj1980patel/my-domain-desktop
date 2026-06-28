@@ -106,6 +106,7 @@ async function enterApp() {
   try { await invoke("refresh_from_server"); } catch (e) { console.warn(e); }
   await loadPeers();
   await refreshClipToggle();
+  await refreshDirectedTransport();
   // Self-report our inbound firewall status so siblings see our reachability.
   try { await invoke("report_firewall"); } catch (e) { console.warn(e); }
   // Verify FCM end-to-end once the token has had a moment to register server-side.
@@ -199,6 +200,7 @@ function renderDevice() {
   cbtn.textContent = isConn ? "Connected ✓" : "Connect";
   cbtn.disabled = isConn;
   el("btn-remove").classList.toggle("hidden", p.source !== "manual");
+  updateSendTransport();
   renderThread();
   renderApps();
 }
@@ -279,23 +281,13 @@ async function onSend(e) {
   e.preventDefault();
   const p = selectedPeer();
   if (!p) return;
-  const protocol = document.querySelector('input[name="proto"]:checked').value;
   const text = el("msg-input").value.trim();
   if (!text) return setStatus("send-status", "Message is empty.", false);
   el("send-btn").disabled = true;
   try {
-    if (protocol === "WS") {
-      await invoke("connect_ws", { nodeId: p.node_id });
-      await new Promise((r) => setTimeout(r, 400));
-    }
-    try {
-      await invoke("send_message", { nodeId: p.node_id, protocol, text });
-    } catch (err) {
-      if (protocol === "WS" && String(err).includes("no WebSocket")) {
-        await new Promise((r) => setTimeout(r, 600));
-        await invoke("send_message", { nodeId: p.node_id, protocol, text });
-      } else throw err;
-    }
+    // Core auto-selects the transport: the active P2P connection if one is
+    // live, else the directed transport (UDP/TCP). It returns what it used.
+    const protocol = await invoke("send_message", { nodeId: p.node_id, text });
     logActivity({ node: p.node_id, dir: "out", name: p.name, ip: p.ip, protocol, text });
     el("msg-input").value = "";
     setStatus("send-status", `Sent over ${protocol}.`, true);
@@ -304,6 +296,18 @@ async function onSend(e) {
   } finally {
     el("send-btn").disabled = false;
   }
+}
+
+// Reflect which transport the next message will use for the selected device.
+let directedTransport = "UDP";
+function updateSendTransport() {
+  const hint = el("send-transport");
+  if (!hint) return;
+  const p = selectedPeer();
+  const tx = p && connected.get(p.node_id);
+  hint.textContent = tx
+    ? `Sends over the active ${tx.toUpperCase()} connection.`
+    : `No live connection — sends directly over ${directedTransport}.`;
 }
 
 async function refreshClipToggle() {
@@ -347,12 +351,33 @@ async function onNotif(e) {
 }
 
 // ---------- settings ----------
-function openSettings() {
+async function openSettings() {
   view = "settings";
   selected = null;
   el("nav-settings").classList.add("active");
   showView();
   renderDevices();
+  await refreshDirectedTransport();
+}
+async function refreshDirectedTransport() {
+  try {
+    directedTransport = (await invoke("directed_transport")) || "UDP";
+  } catch {
+    directedTransport = "UDP";
+  }
+  const radio = document.querySelector(`input[name="dtransport"][value="${directedTransport}"]`);
+  if (radio) radio.checked = true;
+}
+async function onTransportChange(e) {
+  const transport = e.target.value;
+  try {
+    await invoke("set_directed_transport", { transport });
+    directedTransport = transport;
+    updateSendTransport();
+    toast(`Direct transport set to ${transport}`);
+  } catch (err) {
+    setStatus("fw-status", String(err), false);
+  }
 }
 async function onUpdateKey(e) {
   e.preventDefault();
@@ -497,6 +522,7 @@ async function init() {
   el("settings-form").addEventListener("submit", onUpdateKey);
   el("s-genkey").addEventListener("click", async () => { el("s-key").value = await invoke("generate_key"); });
   el("btn-firewall").addEventListener("click", onFirewall);
+  el("transport-seg").addEventListener("change", onTransportChange);
   el("s-logout").addEventListener("click", async () => { await invoke("logout"); location.reload(); });
 
   // modal
@@ -528,12 +554,14 @@ async function init() {
     const p = peers.find((x) => x.node_id === m.node_id);
     dlog("ws", "p2p", `connected via ${m.transport} ${p ? `${p.ip} (${p.name})` : m.node_id}`);
     renderDevices(); if (view === "device") renderDevice();
+    updateSendTransport();
   });
   await listen("peer-disconnected", (ev) => {
     connected.delete(ev.payload);
     const p = peers.find((x) => x.node_id === ev.payload);
     dlog("ws", "p2p", `disconnected ${p ? `${p.ip} (${p.name})` : ev.payload}`);
     renderDevices(); if (view === "device") renderDevice();
+    updateSendTransport();
   });
   await listen("connect-progress", (ev) => {
     const m = ev.payload || {};

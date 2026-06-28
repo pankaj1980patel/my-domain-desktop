@@ -277,8 +277,18 @@ fn connect_ws(node_id: String, engine: State<Eng>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn send_message(node_id: String, protocol: String, text: String, engine: State<Eng>) -> Result<(), String> {
-    engine.send(&node_id, &protocol, &text)
+fn send_message(node_id: String, text: String, engine: State<Eng>) -> Result<String, String> {
+    engine.send(&node_id, &text)
+}
+
+#[tauri::command]
+fn directed_transport(engine: State<Eng>) -> String {
+    engine.directed_transport()
+}
+
+#[tauri::command]
+fn set_directed_transport(transport: String, engine: State<Eng>) {
+    engine.set_directed_transport(&transport)
 }
 
 #[tauri::command]
@@ -429,6 +439,8 @@ pub fn run() {
             scan_lan,
             connect_ws,
             send_message,
+            directed_transport,
+            set_directed_transport,
             enable_clipboard_sync,
             disable_clipboard_sync,
             clipboard_sync_enabled,

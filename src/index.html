@@ -97,11 +97,7 @@
             <article class="card">
               <div class="card-head"><span class="card-ic">✉</span><h3>Send message</h3></div>
               <form id="send-form" class="card-body">
-                <div class="seg" id="proto-seg">
-                  <input type="radio" name="proto" id="proto-udp" value="UDP" checked /><label for="proto-udp">UDP</label>
-                  <input type="radio" name="proto" id="proto-tcp" value="TCP" /><label for="proto-tcp">TCP</label>
-                  <input type="radio" name="proto" id="proto-ws" value="WS" /><label for="proto-ws">WS</label>
-                </div>
+                <p class="hint" id="send-transport">Sends over the active connection automatically.</p>
                 <textarea id="msg-input" rows="2" placeholder="Type a message…" required></textarea>
                 <div class="row end"><button type="submit" id="send-btn" class="primary sm">Send</button></div>
                 <p id="send-status" class="status"></p>
@@ -184,6 +180,12 @@
             <article class="card">
               <div class="card-head"><span class="card-ic">🛡</span><h3>Connectivity</h3></div>
               <div class="card-body">
+                <label class="muted small" for="set-transport">Direct transport (when no live connection)</label>
+                <div class="seg" id="transport-seg">
+                  <input type="radio" name="dtransport" id="dt-udp" value="UDP" checked /><label for="dt-udp">UDP</label>
+                  <input type="radio" name="dtransport" id="dt-tcp" value="TCP" /><label for="dt-tcp">TCP</label>
+                </div>
+                <p class="hint">Messages always use an active P2P connection when one exists; this only applies to one-off sends to peers you aren't connected to.</p>
                 <button type="button" id="btn-firewall" class="ghost block">Run firewall check</button>
                 <p id="fw-status" class="status"></p>
               </div>
