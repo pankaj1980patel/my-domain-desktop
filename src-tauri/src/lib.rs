@@ -23,15 +23,38 @@ pub(crate) type Eng = Engine<DesktopPlatform>;
 // Platform implementation
 // ---------------------------------------------------------------------------
 
-/// System clipboard via arboard (a fresh handle per call, as before).
-struct DesktopClipboard;
+/// System clipboard via arboard.
+///
+/// The handle is kept ALIVE for the process lifetime, not recreated per call.
+/// On Linux this is mandatory: X11/Wayland clipboards are served by the *owning*
+/// process, so a transient handle would lose the data the instant it's dropped
+/// (right after `set`) — which is exactly why pasting on Linux failed. A
+/// persistent owner keeps serving the selection. macOS/Windows copy into a
+/// system pasteboard, so this is merely an optimization there.
+struct DesktopClipboard {
+    inner: std::sync::Mutex<Option<arboard::Clipboard>>,
+}
+
+impl DesktopClipboard {
+    fn new() -> Self {
+        DesktopClipboard { inner: std::sync::Mutex::new(arboard::Clipboard::new().ok()) }
+    }
+}
 
 impl Clipboard for DesktopClipboard {
     fn get(&self) -> Option<String> {
-        arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())
+        let mut g = self.inner.lock().unwrap();
+        if g.is_none() {
+            *g = arboard::Clipboard::new().ok();
+        }
+        g.as_mut().and_then(|c| c.get_text().ok())
     }
     fn set(&self, text: &str) {
-        if let Ok(mut c) = arboard::Clipboard::new() {
+        let mut g = self.inner.lock().unwrap();
+        if g.is_none() {
+            *g = arboard::Clipboard::new().ok();
+        }
+        if let Some(c) = g.as_mut() {
             let _ = c.set_text(text.to_owned());
         }
     }
@@ -406,7 +429,7 @@ pub fn run() {
                 Arc::new(std::sync::Mutex::new(None));
             let platform = DesktopPlatform {
                 app: handle.clone(),
-                clipboard: DesktopClipboard,
+                clipboard: DesktopClipboard::new(),
                 fcm_token: fcm_token.clone(),
             };
             let sink: Arc<dyn EventSink> = Arc::new(TauriSink { app: handle.clone() });

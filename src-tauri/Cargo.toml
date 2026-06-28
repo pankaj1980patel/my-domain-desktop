@@ -29,7 +29,9 @@ machine-uid = "0.5"
 gethostname = "0.5"
 if-addrs = "0.13"
 tungstenite = "0.24"
-arboard = "3"
+# wayland-data-control adds native Wayland clipboard support (wlr data-control)
+# so copy/paste works under Wayland sessions, not just X11/XWayland.
+arboard = { version = "3", features = ["wayland-data-control"] }
 # Native FCM receiver: simulates an Android/web client to obtain an FCM token
 # and receive data messages over a persistent MTalk connection (no browser /
 # service worker needed). Blocking (reqwest blocking), so it runs in its own
