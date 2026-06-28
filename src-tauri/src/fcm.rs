@@ -48,10 +48,16 @@ fn preview(s: &str) -> String {
     }
 }
 
-/// Public web-config defaults for the `my-domain-c0c36` Firebase project. These
-/// are not secrets (the web SDK ships them to every browser); env vars override.
+/// Public web-config defaults for the `my-domain-c0c36` Firebase project. None
+/// of these are secrets — the web SDK ships them to every browser, and the VAPID
+/// value is the *public* push key (its private half stays on the server). Baking
+/// them means every desktop install can receive push signals out of the box; a
+/// `fcm_config.json` or env var still overrides any of them per machine.
 const DEFAULT_API_KEY: &str = "AIzaSyC15ftHcLqR3kaSp9iFWJQTyOaByEeLves";
 const DEFAULT_PROJECT_ID: &str = "my-domain-c0c36";
+const DEFAULT_APP_ID: &str = "1:744722246836:web:11fa725b96ced3ecebfbe1";
+const DEFAULT_VAPID_KEY: &str =
+    "BGENRpf8b_hvgMPaQ45OJZfjL6_l6-iwVTmYXqJrk0Fn0KcSy_sIX3XcISIBb9ijFkjEoz3uguOHBrkDFy51zxs";
 
 struct FcmConfig {
     api_key: String,
@@ -79,9 +85,9 @@ impl FcmConfig {
 
         let cfg = FcmConfig {
             api_key: pick("MYDOMAIN_FCM_API_KEY", &file.api_key, DEFAULT_API_KEY),
-            app_id: pick("MYDOMAIN_FCM_APP_ID", &file.app_id, ""),
+            app_id: pick("MYDOMAIN_FCM_APP_ID", &file.app_id, DEFAULT_APP_ID),
             project_id: pick("MYDOMAIN_FCM_PROJECT_ID", &file.project_id, DEFAULT_PROJECT_ID),
-            vapid_key: pick("MYDOMAIN_FCM_VAPID_KEY", &file.vapid_key, ""),
+            vapid_key: pick("MYDOMAIN_FCM_VAPID_KEY", &file.vapid_key, DEFAULT_VAPID_KEY),
         };
         if cfg.app_id.trim().is_empty() || cfg.vapid_key.trim().is_empty() {
             return None;
