@@ -26,9 +26,15 @@ function dlog(kind, label, detail) {
   else updateDebugBadge();
 }
 
+const wsAddr = (p) => (p ? `ws://${p.ip}:${p.ws_port}` : "");
+
 // Wrapped Tauri bridge — used everywhere below instead of the raw handles.
 const invoke = async (cmd, args) => {
   dlog("invoke", cmd, args);
+  if (cmd === "connect_ws" && args && args.nodeId) {
+    const p = peers.find((x) => x.node_id === args.nodeId);
+    dlog("ws", "ws", `dialing ${p ? `${wsAddr(p)} (${p.name})` : args.nodeId}…`);
+  }
   try {
     const r = await _core.invoke(cmd, args);
     dlog("result", cmd, r);
@@ -378,12 +384,12 @@ function fmtTs(ts) {
 }
 function debugVisible(e) {
   if (debugFilter === "calls") return e.kind === "invoke" || e.kind === "result";
-  if (debugFilter === "events") return e.kind === "event";
+  if (debugFilter === "events") return e.kind === "event" || e.kind === "ws" || e.kind === "fcm";
   if (debugFilter === "errors") return e.kind === "error";
   return true; // all
 }
 function debugRow(e) {
-  const arrow = { invoke: "→", result: "←", error: "✕", event: "◆", info: "·" }[e.kind] || "·";
+  const arrow = { invoke: "→", result: "←", error: "✕", event: "◆", ws: "⇄", fcm: "🔔", info: "·" }[e.kind] || "·";
   const d = e.detail.length > 400 ? e.detail.slice(0, 400) + "…" : e.detail;
   const detail = d ? `<span class="dbg-detail">${esc(d)}</span>` : "";
   return `<li class="dbg-row dbg-${e.kind}"><span class="dbg-ts">${fmtTs(e.ts)}</span><span class="dbg-k">${arrow}</span><span class="dbg-label">${esc(e.label)}</span>${detail}</li>`;
@@ -488,8 +494,24 @@ async function init() {
 
   // events
   await listen("peers-updated", (ev) => { peers = ev.payload; renderDevices(); });
-  await listen("ws-connected", (ev) => { connected.add(ev.payload); renderDevices(); if (view === "device") renderDevice(); });
-  await listen("ws-disconnected", (ev) => { connected.delete(ev.payload); renderDevices(); if (view === "device") renderDevice(); });
+  await listen("ws-connected", (ev) => {
+    connected.add(ev.payload);
+    const p = peers.find((x) => x.node_id === ev.payload);
+    dlog("ws", "ws", `connected ${p ? `${wsAddr(p)} (${p.name})` : ev.payload}`);
+    renderDevices(); if (view === "device") renderDevice();
+  });
+  await listen("ws-disconnected", (ev) => {
+    connected.delete(ev.payload);
+    const p = peers.find((x) => x.node_id === ev.payload);
+    dlog("ws", "ws", `disconnected ${p ? `${wsAddr(p)} (${p.name})` : ev.payload}`);
+    renderDevices(); if (view === "device") renderDevice();
+  });
+  // FCM push signals (raw listen: emit our own clean line instead of the generic event dump).
+  _event.listen("fcm-event", (ev) => {
+    const m = ev.payload || {};
+    const text = `${m.text || ""}${m.from ? ` · from ${m.from}` : ""}`;
+    dlog(m.kind === "error" ? "error" : "fcm", "fcm", text);
+  });
   await listen("message-received", (ev) => {
     const m = ev.payload;
     logActivity({ dir: "in", name: m.from, ip: m.ip, protocol: m.protocol, text: m.text, ok: m.ok });

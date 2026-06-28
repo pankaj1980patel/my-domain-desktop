@@ -216,3 +216,5 @@ label input, label textarea, label select { margin-top: 5px; color: var(--text);
 .dbg-event .dbg-k { color: var(--amber); }
 .dbg-error .dbg-k, .dbg-error .dbg-label { color: var(--red); }
 .dbg-info .dbg-k { color: var(--muted); }
+.dbg-ws .dbg-k, .dbg-ws .dbg-label { color: var(--accent); }
+.dbg-fcm .dbg-k, .dbg-fcm .dbg-label { color: #c08bff; }
