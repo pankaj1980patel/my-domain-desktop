@@ -243,7 +243,13 @@ fn extract_signal(bytes: &[u8]) -> Option<(String, String)> {
         .get("data")
         .and_then(|d| d.as_object())
         .or_else(|| v.as_object())?;
-    let from = obj.get("from")?.as_str()?.to_string();
+    // `from` is an FCM-reserved data key, so the server sends the sender id as
+    // `sender`; accept the legacy `from` too for forward/backward compatibility.
+    let from = obj
+        .get("sender")
+        .or_else(|| obj.get("from"))
+        .and_then(|v| v.as_str())?
+        .to_string();
     let payload = obj.get("payload")?.as_str()?.to_string();
     Some((from, payload))
 }
