@@ -187,3 +187,32 @@ label input, label textarea, label select { margin-top: 5px; color: var(--text);
 
 /* ---------- toast ---------- */
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--bg-elev); border: 1px solid var(--line); color: var(--text); padding: 10px 18px; border-radius: 24px; font-size: 13px; z-index: 30; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+
+/* ---------- debug panel ---------- */
+#debug-fab { position: fixed; bottom: 16px; left: 16px; z-index: 40; display: flex; align-items: center; gap: 6px; background: var(--bg-elev); border: 1px solid var(--line); color: var(--muted); font-size: 12px; padding: 7px 12px; border-radius: 20px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+#debug-fab:hover, #debug-fab.active { color: var(--text); border-color: var(--accent); }
+#debug-fab .dbg-ic { font-size: 13px; }
+.dbg-badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px; background: var(--red); color: #fff; font-size: 10px; font-weight: 600; display: grid; place-items: center; }
+
+.debug-panel { position: fixed; left: 0; right: 0; bottom: 0; height: 42vh; min-height: 220px; background: var(--bg-side); border-top: 1px solid var(--line); display: flex; flex-direction: column; z-index: 45; box-shadow: 0 -10px 40px rgba(0,0,0,.5); }
+.debug-head { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.debug-head strong { font-size: 13px; }
+.debug-filters { display: flex; gap: 4px; }
+.debug-actions { margin-left: auto; display: flex; gap: 6px; }
+.dbg-chip { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 3px 10px; font-size: 11.5px; border-radius: 14px; }
+.dbg-chip:hover { color: var(--text); }
+.dbg-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.debug-log { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.5; }
+.dbg-empty { color: var(--muted); text-align: center; padding: 20px; }
+.dbg-row { display: flex; align-items: baseline; gap: 8px; padding: 1px 12px; overflow: hidden; }
+.dbg-row:hover { background: rgba(255,255,255,.03); }
+.dbg-ts { color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.dbg-k { flex-shrink: 0; width: 12px; text-align: center; }
+.dbg-label { flex-shrink: 0; font-weight: 600; }
+.dbg-detail { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbg-invoke .dbg-k { color: var(--accent); }
+.dbg-result .dbg-k { color: var(--green); }
+.dbg-event .dbg-k { color: var(--amber); }
+.dbg-error .dbg-k, .dbg-error .dbg-label { color: var(--red); }
+.dbg-info .dbg-k { color: var(--muted); }

@@ -227,6 +227,28 @@
       </form>
     </div>
 
+    <!-- ============ Debug panel ============ -->
+    <button id="debug-fab" type="button" title="Toggle debug log (⌘`)">
+      <span class="dbg-ic">🐞</span><span>Debug</span><span id="debug-badge" class="dbg-badge hidden"></span>
+    </button>
+    <section id="debug-panel" class="debug-panel hidden">
+      <header class="debug-head">
+        <strong>Debug log</strong>
+        <div id="debug-filters" class="debug-filters">
+          <button type="button" class="dbg-chip active" data-filter="all">All</button>
+          <button type="button" class="dbg-chip" data-filter="calls">Calls</button>
+          <button type="button" class="dbg-chip" data-filter="events">Events</button>
+          <button type="button" class="dbg-chip" data-filter="errors">Errors</button>
+        </div>
+        <div class="debug-actions">
+          <button type="button" id="debug-copy" class="ghost xsm">Copy</button>
+          <button type="button" id="debug-clear" class="ghost xsm">Clear</button>
+          <button type="button" id="debug-close" class="ghost xsm" title="Close (Esc)">✕</button>
+        </div>
+      </header>
+      <ul id="debug-log" class="debug-log"><li class="dbg-empty">No log entries.</li></ul>
+    </section>
+
     <div id="toast" class="toast hidden"></div>
   </body>
 </html>

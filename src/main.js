@@ -1,9 +1,45 @@
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+const _core = window.__TAURI__.core;
+const _event = window.__TAURI__.event;
 
 const el = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- debug log ----------
+// Every backend call and every core event flows through these wrappers, so the
+// debug panel is a faithful, timestamped trace of the connection process and
+// all other activity without sprinkling log() calls across the codebase.
+const debugLog = []; // { ts, kind, label, detail }  kind: invoke|result|error|event|info
+let debugFilter = "all"; // all | calls | events | errors
+let debugOpen = false;
+
+const fmtDetail = (d) => {
+  if (d === undefined || d === null) return "";
+  if (typeof d === "string") return d;
+  try { return JSON.stringify(d); } catch { return String(d); }
+};
+function dlog(kind, label, detail) {
+  const entry = { ts: Date.now(), kind, label, detail: fmtDetail(detail) };
+  debugLog.push(entry);
+  if (debugLog.length > 1000) debugLog.shift();
+  if (debugOpen) renderDebug();
+  else updateDebugBadge();
+}
+
+// Wrapped Tauri bridge — used everywhere below instead of the raw handles.
+const invoke = async (cmd, args) => {
+  dlog("invoke", cmd, args);
+  try {
+    const r = await _core.invoke(cmd, args);
+    dlog("result", cmd, r);
+    return r;
+  } catch (err) {
+    dlog("error", cmd, err);
+    throw err;
+  }
+};
+const listen = (name, cb) =>
+  _event.listen(name, (ev) => { dlog("event", name, ev.payload); return cb(ev); });
 
 // ---------- state ----------
 let peers = [];
@@ -334,6 +370,55 @@ async function onAddManual(e) {
   }
 }
 
+// ---------- debug panel ----------
+function fmtTs(ts) {
+  const d = new Date(ts);
+  const p = (n, l = 2) => String(n).padStart(l, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+}
+function debugVisible(e) {
+  if (debugFilter === "calls") return e.kind === "invoke" || e.kind === "result";
+  if (debugFilter === "events") return e.kind === "event";
+  if (debugFilter === "errors") return e.kind === "error";
+  return true; // all
+}
+function debugRow(e) {
+  const arrow = { invoke: "→", result: "←", error: "✕", event: "◆", info: "·" }[e.kind] || "·";
+  const d = e.detail.length > 400 ? e.detail.slice(0, 400) + "…" : e.detail;
+  const detail = d ? `<span class="dbg-detail">${esc(d)}</span>` : "";
+  return `<li class="dbg-row dbg-${e.kind}"><span class="dbg-ts">${fmtTs(e.ts)}</span><span class="dbg-k">${arrow}</span><span class="dbg-label">${esc(e.label)}</span>${detail}</li>`;
+}
+function renderDebug() {
+  const box = el("debug-log");
+  if (!box) return;
+  const rows = debugLog.filter(debugVisible);
+  box.innerHTML = rows.length ? rows.map(debugRow).join("") : '<li class="dbg-empty">No log entries.</li>';
+  box.scrollTop = box.scrollHeight;
+  updateDebugBadge();
+}
+function updateDebugBadge() {
+  const b = el("debug-badge");
+  if (!b) return;
+  const errs = debugLog.filter((e) => e.kind === "error").length;
+  b.textContent = errs ? String(errs) : "";
+  b.classList.toggle("hidden", !errs || debugOpen);
+}
+function toggleDebug(force) {
+  debugOpen = force !== undefined ? force : !debugOpen;
+  el("debug-panel").classList.toggle("hidden", !debugOpen);
+  el("debug-fab").classList.toggle("active", debugOpen);
+  if (debugOpen) renderDebug();
+  else updateDebugBadge();
+}
+function setDebugFilter(f) {
+  debugFilter = f;
+  document.querySelectorAll(".dbg-chip").forEach((c) => c.classList.toggle("active", c.dataset.filter === f));
+  renderDebug();
+}
+function debugAsText() {
+  return debugLog.map((e) => `${fmtTs(e.ts)} [${e.kind}] ${e.label}${e.detail ? " " + e.detail : ""}`).join("\n");
+}
+
 // ---------- init ----------
 async function init() {
   const saved = await invoke("get_saved_session");
@@ -385,6 +470,21 @@ async function init() {
   el("manual-form").addEventListener("submit", onAddManual);
   el("m-cancel").addEventListener("click", closeAdd);
   el("modal-add").addEventListener("click", (e) => { if (e.target.id === "modal-add") closeAdd(); });
+
+  // debug panel
+  el("debug-fab").addEventListener("click", () => toggleDebug());
+  el("debug-close").addEventListener("click", () => toggleDebug(false));
+  el("debug-clear").addEventListener("click", () => { debugLog.length = 0; renderDebug(); });
+  el("debug-copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(debugAsText()); toast("Debug log copied"); }
+    catch { toast("Copy failed"); }
+  });
+  el("debug-filters").addEventListener("click", (e) => { const c = e.target.closest(".dbg-chip"); if (c) setDebugFilter(c.dataset.filter); });
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "`" || e.key === "~")) { e.preventDefault(); toggleDebug(); }
+    else if (e.key === "Escape" && debugOpen) toggleDebug(false);
+  });
+  dlog("info", "app", "debug panel ready");
 
   // events
   await listen("peers-updated", (ev) => { peers = ev.payload; renderDevices(); });
