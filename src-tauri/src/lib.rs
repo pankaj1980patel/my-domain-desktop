@@ -15,7 +15,9 @@ use mdcore::events::{CoreEvent, EventSink};
 use mdcore::model::{Identity, Peer};
 use mdcore::platform::{IfaceMode, Platform};
 
-type Eng = Engine<DesktopPlatform>;
+mod fcm;
+
+pub(crate) type Eng = Engine<DesktopPlatform>;
 
 // ---------------------------------------------------------------------------
 // Platform implementation
@@ -38,6 +40,9 @@ impl Clipboard for DesktopClipboard {
 struct DesktopPlatform {
     app: AppHandle,
     clipboard: DesktopClipboard,
+    /// Set by the FCM receiver thread once Firebase issues a token; reported to
+    /// the registry on refresh so siblings can signal this device.
+    fcm_token: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl DesktopPlatform {
@@ -114,6 +119,10 @@ impl Platform for DesktopPlatform {
                 let _ = std::fs::write(p, bytes);
             }
         }
+    }
+
+    fn fcm_token(&self) -> Option<String> {
+        self.fcm_token.lock().unwrap().clone()
     }
 
     fn clipboard(&self) -> Option<&dyn Clipboard> {
@@ -354,9 +363,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let handle = app.handle().clone();
+            let fcm_token: Arc<std::sync::Mutex<Option<String>>> =
+                Arc::new(std::sync::Mutex::new(None));
             let platform = DesktopPlatform {
                 app: handle.clone(),
                 clipboard: DesktopClipboard,
+                fcm_token: fcm_token.clone(),
             };
             let sink: Arc<dyn EventSink> = Arc::new(TauriSink { app: handle.clone() });
             match Engine::start(platform, sink) {
@@ -368,6 +380,8 @@ pub fn run() {
                     return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)));
                 }
             }
+            // Start the FCM receiver (needs the managed Engine for on_signal).
+            fcm::spawn(handle.clone(), fcm_token);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

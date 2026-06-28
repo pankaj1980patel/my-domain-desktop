@@ -30,4 +30,9 @@ gethostname = "0.5"
 if-addrs = "0.13"
 tungstenite = "0.24"
 arboard = "3"
+# Native FCM receiver: simulates an Android/web client to obtain an FCM token
+# and receive data messages over a persistent MTalk connection (no browser /
+# service worker needed). Blocking (reqwest blocking), so it runs in its own
+# thread alongside the Engine's blocking loops.
+fcm_receiver_rs = "0.1.1"
 
