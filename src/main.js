@@ -56,6 +56,7 @@ let identity = null;
 const activity = []; // { node?, dir, name, ip, protocol, text, ok, ts }
 const appsByNode = {}; // node_id -> { apps: [{pkg,label}], subscribed: Set<pkg> }
 let appsSearch = "";
+let fcmPingTimer = null; // pending FCM self-test pong timeout
 
 // ---------- helpers ----------
 function setStatus(id, msg, ok) {
@@ -105,6 +106,25 @@ async function enterApp() {
   try { await invoke("refresh_from_server"); } catch (e) { console.warn(e); }
   await loadPeers();
   await refreshClipToggle();
+  // Verify FCM end-to-end once the token has had a moment to register server-side.
+  setTimeout(fcmSelfTest, 3000);
+}
+
+// Round-trip FCM check: push a ping to our own token; the pong returns via the
+// FCM receiver as an fcm-event. No pong within the window => FCM isn't delivering.
+async function fcmSelfTest() {
+  try {
+    const sid = await invoke("fcm_selftest");
+    dlog("fcm", "fcm", `self-test: ping sent (${String(sid).slice(0, 8)}…) — awaiting pong…`);
+    clearTimeout(fcmPingTimer);
+    fcmPingTimer = setTimeout(() => {
+      fcmPingTimer = null;
+      dlog("error", "fcm", "self-test: no pong within 12s — FCM is NOT delivering pushes");
+      toast("⚠ FCM self-test failed (no pong)");
+    }, 12000);
+  } catch (err) {
+    dlog("error", "fcm", `self-test ping failed: ${err}`);
+  }
 }
 
 function renderMeDetails() {
@@ -511,6 +531,11 @@ async function init() {
     const m = ev.payload || {};
     const text = `${m.text || ""}${m.from ? ` · from ${m.from}` : ""}`;
     dlog(m.kind === "error" ? "error" : "fcm", "fcm", text);
+    if ((m.text || "").includes("pong received")) {
+      clearTimeout(fcmPingTimer);
+      fcmPingTimer = null;
+      toast("FCM working ✓");
+    }
   });
   await listen("message-received", (ev) => {
     const m = ev.payload;

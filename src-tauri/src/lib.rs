@@ -330,6 +330,13 @@ fn firewall_check(engine: State<Eng>) -> Result<FirewallStatus, String> {
     engine.firewall_check()
 }
 
+/// Round-trip FCM self-test: pushes a ping to our own token via the server. The
+/// pong arrives through the FCM receiver (see `fcm.rs`) as an `fcm-event`.
+#[tauri::command]
+fn fcm_selftest(engine: State<Eng>) -> Result<String, String> {
+    engine.fcm_selftest()
+}
+
 #[tauri::command]
 fn update_ws_open(open: bool, engine: State<Eng>) -> Result<(), String> {
     engine.update_ws_open(open)
@@ -411,6 +418,7 @@ pub fn run() {
             share_call_history,
             connect,
             firewall_check,
+            fcm_selftest,
             update_ws_open,
             on_signal,
             request_apps,

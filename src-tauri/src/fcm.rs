@@ -159,9 +159,16 @@ fn run(
     client.on_data_message = Some(Arc::new(move |payload: Vec<u8>| {
         match extract_signal(&payload) {
             Some((from, sig)) => {
-                emit_fcm(&handle, "message", &from, &preview(&sig));
-                if let Some(engine) = handle.try_state::<Eng>() {
-                    engine.on_signal(&from, &sig);
+                // Self-test pong: the server echoes our ping as `selfping:<sid>`.
+                // Receiving it proves the full push path works; don't forward it
+                // to the Engine (it isn't a real Signal).
+                if let Some(sid) = sig.strip_prefix("selfping:") {
+                    emit_fcm(&handle, "info", &from, &format!("self-test pong received — FCM round-trip OK ✓ ({sid})"));
+                } else {
+                    emit_fcm(&handle, "message", &from, &preview(&sig));
+                    if let Some(engine) = handle.try_state::<Eng>() {
+                        engine.on_signal(&from, &sig);
+                    }
                 }
             }
             None => {
